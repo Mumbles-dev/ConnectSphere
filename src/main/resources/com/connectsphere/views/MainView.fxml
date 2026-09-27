@@ -1,0 +1,603 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  Main.fxml
+  Converted from the "Contact Network" React application.
+  NOTE: the React source actually contains 4 navigable views (Contacts,
+  Connection Finder, Settings, and an "About" panel reached from the
+  sidebar footer). All 4 are included below so the UI stays faithful to
+  the source; About is trivial (static text) and does not affect the
+  "3 main pages" navigation requirement.
+-->
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.canvas.Canvas?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.shape.SVGPath?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.connectsphere.controller.MainController"
+            stylesheets="@../stylesheets/Main.css" styleClass="root-bg" prefWidth="1280" prefHeight="800">
+
+    <!-- Shared toggle groups used by Settings' segmented controls and swatches -->
+    <fx:define>
+        <ToggleGroup fx:id="themeToggleGroup"/>
+        <ToggleGroup fx:id="sortingToggleGroup"/>
+        <ToggleGroup fx:id="accentColorToggleGroup"/>
+    </fx:define>
+
+    <!-- ============================== SIDEBAR ============================== -->
+    <left>
+        <VBox fx:id="sidebarBox" styleClass="sidebar" prefWidth="228" minWidth="228" maxWidth="228">
+
+            <!-- Logo -->
+            <HBox alignment="CENTER_LEFT" spacing="10" styleClass="sidebar-logo-row">
+                <StackPane styleClass="logo-icon-box">
+                    <!-- Phosphor icon: ph-users -->
+                    <SVGPath fx:id="logoIcon" styleClass="icon, icon-on-accent"/>
+                </StackPane>
+                <VBox spacing="0">
+                    <Label text="Contact" styleClass="logo-title-line1"/>
+                    <Label text="Network" styleClass="logo-title-line2"/>
+                </VBox>
+            </HBox>
+
+            <Separator styleClass="sidebar-separator"/>
+            <Label text="MENU" styleClass="sidebar-section-label"/>
+
+            <!-- Nav -->
+            <VBox spacing="2" styleClass="nav-list">
+                <Button fx:id="navContactsBtn" text="Contacts" onAction="#showContactsPage"
+                        styleClass="nav-button, nav-button-active" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+                <Button fx:id="navFinderBtn" text="Connection Finder" onAction="#showFinderPage"
+                        styleClass="nav-button" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+                <Button fx:id="navSettingsBtn" text="Settings" onAction="#showSettingsPage"
+                        styleClass="nav-button" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+            </VBox>
+
+            <Region VBox.vgrow="ALWAYS"/>
+
+            <Separator styleClass="sidebar-separator"/>
+            <Button fx:id="navAboutBtn" text="About" onAction="#showAboutPage"
+                    styleClass="nav-button-about" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+        </VBox>
+    </left>
+
+    <!-- ============================== PAGE STACK ============================== -->
+    <center>
+        <StackPane fx:id="pageStack" styleClass="page-stack">
+
+            <!-- ============================================================= -->
+            <!-- PAGE 1: CONTACTS                                               -->
+            <!-- ============================================================= -->
+            <HBox fx:id="contactsPageRoot" styleClass="page" visible="true" managed="true">
+
+                <ScrollPane fx:id="contactsScrollPane" styleClass="scroll-area" fitToWidth="true" HBox.hgrow="ALWAYS">
+                    <VBox styleClass="page-content" spacing="0">
+
+                        <!-- Header -->
+                        <HBox alignment="CENTER_LEFT" spacing="16" styleClass="contacts-header-row">
+                            <VBox HBox.hgrow="ALWAYS">
+                                <Label text="Contacts" styleClass="page-title"/>
+                                <Label fx:id="contactsCountLabel" text="0 Contacts" styleClass="page-subtitle"/>
+                            </VBox>
+                            <HBox alignment="CENTER_LEFT" spacing="12">
+                                <HBox alignment="CENTER_LEFT"
+                                      spacing="8"
+                                      styleClass="search-box">
+
+                                    <StackPane fx:id="searchIconBox"
+                                               styleClass="icon-box">
+
+                                        <SVGPath fx:id="searchIcon"
+                                                 styleClass="icon, icon-muted"/>
+                                    </StackPane>
+
+                                    <TextField fx:id="contactsSearchField"
+                                               promptText="Search contacts..."
+                                               styleClass="search-field"
+                                               HBox.hgrow="ALWAYS"/>
+                                </HBox>
+                                <Button fx:id="addContactButton"
+                                        text="Add Contact"
+                                        onAction="#onAddContact"
+                                        styleClass="primary-button">
+
+                                    <graphic>
+                                        <StackPane fx:id="plusIconBox"
+                                                   styleClass="button-icon-box">
+
+                                            <SVGPath fx:id="plusIcon"
+                                                     styleClass="icon, icon-on-accent"/>
+                                        </StackPane>
+                                    </graphic>
+
+                                </Button>
+                            </HBox>
+                        </HBox>
+
+                        <!-- Favorite Contacts -->
+                        <VBox fx:id="favoritesSectionBox" styleClass="section-block" spacing="12">
+                            <HBox alignment="CENTER_LEFT" spacing="12" maxWidth="Infinity">
+                                <Label text="Favorite Contacts" styleClass="section-label" HBox.hgrow="ALWAYS"/>
+                                <Button text="View all" onAction="#onViewAllFavorites" styleClass="link-button"/>
+                            </HBox>
+                            <ScrollPane fitToHeight="true" hbarPolicy="AS_NEEDED" vbarPolicy="NEVER" styleClass="scroll-area">
+                                <HBox fx:id="favoritesContainer" spacing="14"/>
+                            </ScrollPane>
+                        </VBox>
+
+                        <!-- Recently Added -->
+                        <VBox fx:id="recentSectionBox" styleClass="section-block" spacing="12">
+                            <HBox alignment="CENTER_LEFT" spacing="12" maxWidth="Infinity">
+                                <Label text="Recently Added" styleClass="section-label" HBox.hgrow="ALWAYS"/>
+                                <Button text="View all" onAction="#onViewAllRecent" styleClass="link-button"/>
+                            </HBox>
+                            <ListView fx:id="recentContactsListView" styleClass="card-list" prefHeight="280">
+                                <placeholder>
+                                    <Label text="No recently added contacts. Connect a database to populate this list." styleClass="empty-state-label"/>
+                                </placeholder>
+                            </ListView>
+                        </VBox>
+
+                        <!-- All Contacts -->
+                        <VBox styleClass="section-block" spacing="12">
+                            <Label fx:id="allContactsSectionLabel" text="All Contacts" styleClass="section-label"/>
+                            <ListView fx:id="allContactsListView" styleClass="card-list" prefHeight="420">
+                                <placeholder>
+                                    <Label text="No contacts to display. Connect a database to load contacts." styleClass="empty-state-label"/>
+                                </placeholder>
+                            </ListView>
+                        </VBox>
+
+                    </VBox>
+                </ScrollPane>
+
+                <!-- A-Z quick nav -->
+                <VBox fx:id="alphaNavBox" styleClass="alpha-nav" alignment="CENTER" spacing="1" prefWidth="28" minWidth="28">
+                    <Button text="A" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="B" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="C" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="D" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="E" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="F" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="G" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="H" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="I" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="J" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="K" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="L" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="M" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="N" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="O" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="P" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="Q" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="R" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="S" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="T" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="U" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="V" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="W" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="X" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="Y" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                    <Button text="Z" onAction="#onAlphaJump" styleClass="alpha-nav-button"/>
+                </VBox>
+            </HBox>
+
+            <!-- ============================================================= -->
+            <!-- PAGE 2: CONNECTION FINDER                                      -->
+            <!-- ============================================================= -->
+            <HBox fx:id="finderPageRoot" styleClass="page" visible="false" managed="false">
+
+                <!-- Left panel -->
+                <ScrollPane styleClass="scroll-area, finder-left-panel" fitToWidth="true" prefWidth="400" minWidth="400" maxWidth="400">
+                    <VBox styleClass="page-content" spacing="18">
+
+                        <VBox spacing="4">
+                            <Label text="Connection Finder" styleClass="page-title-sm"/>
+                            <Label text="Find the shortest connection path between two contacts." styleClass="page-subtitle" wrapText="true"/>
+                        </VBox>
+
+                        <!-- Find panel -->
+                        <VBox styleClass="card, finder-panel" spacing="16">
+                            <Label text="FIND A CONNECTION" styleClass="section-label-caps"/>
+
+                            <VBox spacing="6">
+                                <Label text="STARTING CONTACT" styleClass="field-label"/>
+                                <ComboBox fx:id="startContactCombo" promptText="Select a contact…" maxWidth="Infinity" styleClass="contact-picker"/>
+                                <!-- TODO: populate items from database/service -->
+                            </VBox>
+
+                            <HBox alignment="CENTER" spacing="8">
+                                <Region styleClass="divider-line" HBox.hgrow="ALWAYS"/>
+                                <StackPane styleClass="connector-arrow-box">
+                                    <!-- Phosphor icon: ph-arrow-down -->
+                                    <SVGPath fx:id="arrowDownIcon" styleClass="icon, icon-accent"/>
+                                </StackPane>
+                                <Region styleClass="divider-line" HBox.hgrow="ALWAYS"/>
+                            </HBox>
+
+                            <VBox spacing="6">
+                                <Label text="DESTINATION CONTACT" styleClass="field-label"/>
+                                <ComboBox fx:id="endContactCombo" promptText="Select a contact…" maxWidth="Infinity" styleClass="contact-picker"/>
+                                <!-- TODO: populate items from database/service -->
+                            </VBox>
+
+                            <Button fx:id="findConnectionButton" text="Find Connection" onAction="#onFindConnection"
+                                    maxWidth="Infinity" styleClass="find-button">
+                                <graphic>
+                                    <StackPane fx:id="findConnectionBox" styleClass="find-connection-box">
+                                    <!-- Phosphor icon: ph-magnifying-glass -->
+                                    <SVGPath fx:id="findConnectionIcon" styleClass="icon, icon-on-accent"/>
+                                    </StackPane>
+                                </graphic>
+                            </Button>
+                        </VBox>
+
+                        <!-- Result area: 3 mutually-exclusive states -->
+                        <StackPane fx:id="resultStateStack">
+
+                            <!-- Idle -->
+                            <VBox fx:id="resultIdleBox" styleClass="card, result-idle-box" alignment="CENTER" spacing="6" visible="true" managed="true">
+                                <Label text="🔗" styleClass="result-idle-emoji"/>
+                                <Label text="Connection Result" styleClass="result-idle-title"/>
+                                <Label text="Select two contacts to find their connection path." styleClass="empty-state-label" wrapText="true" textAlignment="CENTER"/>
+                            </VBox>
+
+                            <!-- Found -->
+                            <VBox fx:id="resultFoundBox" styleClass="card" spacing="14" visible="false" managed="false">
+                                <HBox alignment="CENTER_LEFT" spacing="8">
+                                    <StackPane styleClass="found-check-badge">
+                                        <!-- Phosphor icon: ph-check -->
+                                        <SVGPath fx:id="checkIcon" styleClass="icon, icon-success"/>
+                                    </StackPane>
+                                    <Label text="Connection Found" styleClass="result-found-title"/>
+                                </HBox>
+
+                                <VBox fx:id="pathNodesContainer" spacing="0">
+                                    <!-- TODO: populated dynamically with path-node rows + connector chevrons
+                                         once BFS/shortest-path result is available from the data/service layer -->
+                                </VBox>
+
+                                <HBox styleClass="distance-badge" alignment="CENTER_LEFT" spacing="8">
+                                    <Label text="Connection Distance" styleClass="distance-badge-label" HBox.hgrow="ALWAYS"/>
+                                    <Label fx:id="distanceValueLabel" text="—" styleClass="distance-badge-value"/>
+                                    <Label fx:id="distanceUnitLabel" text="connections" styleClass="distance-badge-unit"/>
+                                </HBox>
+
+                                <Button text="Search Again" onAction="#onResetFinder" maxWidth="Infinity" styleClass="secondary-button"/>
+                            </VBox>
+
+                            <!-- Not found -->
+                            <VBox fx:id="resultNotFoundBox" styleClass="card, result-notfound-box" alignment="CENTER" spacing="10" visible="false" managed="false">
+                                <StackPane styleClass="notfound-icon-badge">
+                                    <!-- Phosphor icon: ph-x -->
+                                    <SVGPath fx:id="xIcon" styleClass="icon, icon-danger"/>
+                                </StackPane>
+                                <Label text="No Connection Found" styleClass="result-notfound-title"/>
+                                <Label fx:id="notFoundMessageLabel" text="There is no connection between the selected contacts."
+                                       styleClass="result-notfound-message" wrapText="true" textAlignment="CENTER"/>
+                                <Button text="Try Another Search" onAction="#onResetFinder" styleClass="primary-button"/>
+                            </VBox>
+                        </StackPane>
+                    </VBox>
+                </ScrollPane>
+
+                <!-- Right panel: network view -->
+                <VBox styleClass="finder-right-panel" HBox.hgrow="ALWAYS">
+                    <HBox styleClass="network-header" alignment="BOTTOM_LEFT" spacing="16">
+                        <VBox HBox.hgrow="ALWAYS">
+                            <Label text="Network View" styleClass="network-title"/>
+                            <Label fx:id="networkStatsLabel" text="0 contacts · 0 connections" styleClass="network-subtitle"/>
+                        </VBox>
+                        <HBox spacing="16" alignment="CENTER">
+                            <HBox spacing="5" alignment="CENTER_LEFT">
+                                <Region styleClass="legend-line-active"/>
+                                <Label text="Active path" styleClass="legend-label"/>
+                            </HBox>
+                            <HBox spacing="5" alignment="CENTER_LEFT">
+                                <Region styleClass="legend-line-inactive"/>
+                                <Label text="Connection" styleClass="legend-label"/>
+                            </HBox>
+                        </HBox>
+                    </HBox>
+
+                    <StackPane styleClass="network-canvas-area" VBox.vgrow="ALWAYS">
+                        <Canvas fx:id="networkCanvas" width="560" height="420"/>
+                        <!-- TODO: draw nodes/edges on this canvas from the graph data/service layer;
+                             re-draw and highlight the active path whenever a search runs -->
+                    </StackPane>
+
+                    <Label fx:id="networkHintLabel" text="Run a search to highlight the connection path in the network."
+                           styleClass="network-hint" alignment="CENTER" maxWidth="Infinity"/>
+                </VBox>
+            </HBox>
+
+            <!-- ============================================================= -->
+            <!-- PAGE 3: SETTINGS                                               -->
+            <!-- ============================================================= -->
+            <HBox fx:id="settingsPageRoot" styleClass="page" visible="false" managed="false">
+
+                <ScrollPane styleClass="scroll-area" fitToWidth="true" HBox.hgrow="ALWAYS">
+                    <VBox styleClass="page-content" spacing="0" maxWidth="780">
+
+                        <VBox styleClass="settings-header-block">
+                            <Label text="Settings" styleClass="page-title"/>
+                            <Label text="Customize Contact Network to your preferences." styleClass="page-subtitle"/>
+                        </VBox>
+
+                        <!-- Appearance -->
+                        <VBox styleClass="settings-section" spacing="10">
+                            <HBox alignment="CENTER_LEFT" spacing="8">
+                                <StackPane fx:id="appearanceBox" styleClass="appearance-box">
+                                <!-- Phosphor icon: ph-sun -->
+                                <SVGPath fx:id="sunIcon" styleClass="icon, icon-accent"/>
+                                </StackPane>
+                                <Label text="APPEARANCE" styleClass="settings-section-title"/>
+                            </HBox>
+                            <VBox styleClass="settings-card">
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Theme" styleClass="settings-row-label"/>
+                                        <Label text="Choose your preferred interface appearance." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <HBox styleClass="segmented-control">
+                                        <ToggleButton text="Light" toggleGroup="$themeToggleGroup" selected="true" onAction="#onThemeChange" styleClass="segmented-button"/>
+                                        <ToggleButton text="Dark" toggleGroup="$themeToggleGroup" onAction="#onThemeChange" styleClass="segmented-button"/>
+                                        <ToggleButton text="System" toggleGroup="$themeToggleGroup" onAction="#onThemeChange" styleClass="segmented-button"/>
+                                    </HBox>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Accent Color" styleClass="settings-row-label"/>
+                                        <Label text="Used for buttons, highlights, and interactive elements." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <HBox spacing="7" alignment="CENTER">
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" selected="true" onAction="#onAccentColorChange" userData="#1e6fa8" styleClass="accent-swatch" style="-fx-background-color: #1e6fa8;"/>
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" onAction="#onAccentColorChange" userData="#0e8a7a" styleClass="accent-swatch" style="-fx-background-color: #0e8a7a;"/>
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" onAction="#onAccentColorChange" userData="#475569" styleClass="accent-swatch" style="-fx-background-color: #475569;"/>
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" onAction="#onAccentColorChange" userData="#7c5cbf" styleClass="accent-swatch" style="-fx-background-color: #7c5cbf;"/>
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" onAction="#onAccentColorChange" userData="#3d9970" styleClass="accent-swatch" style="-fx-background-color: #3d9970;"/>
+                                        <ToggleButton toggleGroup="$accentColorToggleGroup" onAction="#onAccentColorChange" userData="#b45a2a" styleClass="accent-swatch" style="-fx-background-color: #b45a2a;"/>
+                                    </HBox>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row, settings-row-last" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Compact Contact List" styleClass="settings-row-label"/>
+                                        <Label text="Reduce row height to show more contacts at once." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <ToggleButton fx:id="compactListToggle" onAction="#onCompactListToggle" styleClass="switch"/>
+                                </HBox>
+                            </VBox>
+                        </VBox>
+
+                        <!-- Contact List -->
+                        <VBox styleClass="settings-section" spacing="10">
+                            <HBox alignment="CENTER_LEFT" spacing="8">
+                                <StackPane fx:id="contactBox" styleClass="contact-box">
+                                <!-- Phosphor icon: ph-list -->
+                                <SVGPath fx:id="listIcon" styleClass="icon, icon-accent"/>
+                                </StackPane>
+                                <Label text="CONTACT LIST" styleClass="settings-section-title"/>
+                            </HBox>
+                            <VBox styleClass="settings-card">
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Default Sorting" styleClass="settings-row-label"/>
+                                        <Label text="How contacts are ordered in the main list." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <HBox styleClass="segmented-control">
+                                        <ToggleButton text="First Name" toggleGroup="$sortingToggleGroup" selected="true" onAction="#onSortingChange" styleClass="segmented-button"/>
+                                        <ToggleButton text="Last Name" toggleGroup="$sortingToggleGroup" onAction="#onSortingChange" styleClass="segmented-button"/>
+                                    </HBox>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Contact Display Format" styleClass="settings-row-label"/>
+                                        <Label text="Choose what secondary information appears under each name." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <ComboBox fx:id="displayFormatCombo" onAction="#onDisplayFormatChange" styleClass="settings-combo" prefWidth="210"/>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Show Favorite Contacts" styleClass="settings-row-label"/>
+                                        <Label text="Display the Favorites section at the top of the Contacts page." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <ToggleButton fx:id="showFavoritesToggle" selected="true" onAction="#onShowFavoritesToggle" styleClass="switch"/>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row, settings-row-last" alignment="CENTER_LEFT" spacing="24">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Show Recently Added" styleClass="settings-row-label"/>
+                                        <Label text="Display the Recently Added section on the Contacts page." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <ToggleButton fx:id="showRecentToggle" selected="true" onAction="#onShowRecentToggle" styleClass="switch"/>
+                                </HBox>
+                            </VBox>
+                        </VBox>
+
+                        <!-- Database -->
+                        <VBox styleClass="settings-section" spacing="10">
+                            <HBox alignment="CENTER_LEFT" spacing="8">
+                                <StackPane fx:id="databaseBox" styleClass="database-box">
+                                <!-- Phosphor icon: ph-database -->
+                                <SVGPath fx:id="databaseIcon" styleClass="icon, icon-accent"/>
+                                </StackPane>
+                                <Label text="DATABASE" styleClass="settings-section-title"/>
+                            </HBox>
+                            <VBox styleClass="settings-card">
+
+                                <GridPane styleClass="db-stats-grid" hgap="32" vgap="12">
+                                    <columnConstraints>
+                                        <ColumnConstraints percentWidth="50"/>
+                                        <ColumnConstraints percentWidth="50"/>
+                                    </columnConstraints>
+                                    <VBox GridPane.columnIndex="0" GridPane.rowIndex="0">
+                                        <Label text="DATABASE STATUS" styleClass="db-stat-label"/>
+                                        <Label fx:id="dbStatusValueLabel" text="—" styleClass="db-stat-value"/>
+                                        <!-- TODO: bind to live DAO/connection status -->
+                                    </VBox>
+                                    <VBox GridPane.columnIndex="1" GridPane.rowIndex="0">
+                                        <Label text="DATABASE NAME" styleClass="db-stat-label"/>
+                                        <Label fx:id="dbNameValueLabel" text="—" styleClass="db-stat-value, db-stat-mono"/>
+                                    </VBox>
+                                    <VBox GridPane.columnIndex="0" GridPane.rowIndex="1">
+                                        <Label text="TOTAL CONTACTS" styleClass="db-stat-label"/>
+                                        <Label fx:id="totalContactsValueLabel" text="—" styleClass="db-stat-value"/>
+                                        <!-- TODO: bind to COUNT(*) from contacts table -->
+                                    </VBox>
+                                    <VBox GridPane.columnIndex="1" GridPane.rowIndex="1">
+                                        <Label text="TOTAL CONNECTIONS" styleClass="db-stat-label"/>
+                                        <Label fx:id="totalConnectionsValueLabel" text="—" styleClass="db-stat-value"/>
+                                        <!-- TODO: bind to COUNT(*) from connections table -->
+                                    </VBox>
+                                </GridPane>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Backup Database" styleClass="settings-row-label"/>
+                                        <Label text="Export a copy of your contacts.db file." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <Button fx:id="backupButton" text="Backup Database" onAction="#onBackupDatabase" styleClass="outline-button">
+                                        <graphic>
+                                            <StackPane fx:id="downloadBox" styleClass="download-box">
+                                            <!-- Phosphor icon: ph-download-simple -->
+                                            <SVGPath fx:id="downloadIcon" styleClass="icon, icon-accent"/>
+                                            </StackPane>
+                                        </graphic>
+                                    </Button>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16">
+                                    <VBox HBox.hgrow="ALWAYS">
+                                        <Label text="Restore Database" styleClass="settings-row-label"/>
+                                        <Label text="Import a previously saved backup file." styleClass="settings-row-desc" wrapText="true"/>
+                                    </VBox>
+                                    <Button fx:id="restoreButton" text="Restore Database" onAction="#onRestoreDatabase" styleClass="outline-button-muted">
+                                        <graphic>
+                                            <StackPane fx:id="uploadBox" styleClass="upload-box">
+                                            <!-- Phosphor icon: ph-upload-simple -->
+                                            <SVGPath fx:id="uploadIcon" styleClass="icon, icon-muted"/>
+                                            </StackPane>
+                                        </graphic>
+                                    </Button>
+                                </HBox>
+                                <Separator styleClass="settings-row-sep"/>
+
+                                <!-- Clear All Data: normal vs. confirmation state -->
+                                <StackPane fx:id="clearDataStack" styleClass="settings-row-last">
+                                    <HBox fx:id="clearDataNormalBox" alignment="CENTER_LEFT" spacing="16" visible="true" managed="true" styleClass="settings-row, settings-row-last">
+                                        <VBox HBox.hgrow="ALWAYS">
+                                            <Label text="Clear All Data" styleClass="settings-row-label"/>
+                                            <Label text="Permanently delete all contacts and connections from the database." styleClass="settings-row-desc" wrapText="true"/>
+                                        </VBox>
+                                        <Button text="Clear All Data" onAction="#onShowClearWarning" styleClass="danger-outline-button">
+                                            <graphic>
+                                                <StackPane fx:id="trashBox" styleClass="trash-box">
+                                                <!-- Phosphor icon: ph-trash -->
+                                                <SVGPath fx:id="trashIcon" styleClass="icon, icon-danger"/>
+                                                </StackPane>
+                                            </graphic>
+                                        </Button>
+                                    </HBox>
+
+                                    <VBox fx:id="clearDataWarningBox" spacing="14" visible="false" managed="false" styleClass="warning-box">
+                                        <HBox spacing="14" alignment="TOP_LEFT">
+                                            <StackPane styleClass="warning-icon-badge">
+                                                <!-- Phosphor icon: ph-warning -->
+                                                <SVGPath fx:id="warningIcon" styleClass="icon, icon-danger" content="M0,0 L0,0"/>
+                                            </StackPane>
+                                            <VBox spacing="6" HBox.hgrow="ALWAYS">
+                                                <Label text="This action cannot be undone." styleClass="warning-title"/>
+                                                <Label fx:id="clearDataWarningMessage"
+                                                       text="All contacts and connections will be permanently removed from the database. Make sure you have a backup before proceeding."
+                                                       styleClass="warning-message" wrapText="true"/>
+                                                <HBox spacing="8">
+                                                    <Button text="Cancel" onAction="#onCancelClearWarning" styleClass="outline-button-muted"/>
+                                                    <Button text="Yes, Delete Everything" onAction="#onConfirmClearData" styleClass="danger-button"/>
+                                                </HBox>
+                                            </VBox>
+                                        </HBox>
+                                    </VBox>
+                                </StackPane>
+                            </VBox>
+                        </VBox>
+                    </VBox>
+                </ScrollPane>
+
+                <!-- Right gutter -->
+                <VBox styleClass="settings-gutter" prefWidth="220" minWidth="220" maxWidth="220" spacing="0">
+                    <Label text="APPLICATION" styleClass="gutter-section-title"/>
+                    <VBox spacing="14" styleClass="gutter-app-info">
+                        <VBox spacing="2">
+                            <Label text="VERSION" styleClass="gutter-item-label"/>
+                            <Label fx:id="appVersionLabel" text="—" styleClass="gutter-item-value"/>
+                        </VBox>
+                        <VBox spacing="2">
+                            <Label text="BUILD" styleClass="gutter-item-label"/>
+                            <Label fx:id="appBuildLabel" text="—" styleClass="gutter-item-value"/>
+                        </VBox>
+                        <VBox spacing="2">
+                            <Label text="PLATFORM" styleClass="gutter-item-label"/>
+                            <Label fx:id="appPlatformLabel" text="—" styleClass="gutter-item-value"/>
+                        </VBox>
+                        <VBox spacing="2">
+                            <Label text="DATABASE ENGINE" styleClass="gutter-item-label"/>
+                            <Label fx:id="appDbEngineLabel" text="—" styleClass="gutter-item-value"/>
+                        </VBox>
+                        <VBox spacing="2">
+                            <Label text="LAST BACKUP" styleClass="gutter-item-label"/>
+                            <Label fx:id="appLastBackupLabel" text="—" styleClass="gutter-item-value"/>
+                        </VBox>
+                        <!-- TODO: populate app-info labels above from build/config metadata -->
+                    </VBox>
+
+                    <Separator styleClass="gutter-separator"/>
+                    <Label text="QUICK ACTIONS" styleClass="gutter-section-title"/>
+                    <VBox spacing="2">
+                        <Button text="Open Log File" onAction="#onOpenLogFile" styleClass="quick-action-button" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+                        <Button text="Check for Updates" onAction="#onCheckForUpdates" styleClass="quick-action-button" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+                        <Button text="Report an Issue" onAction="#onReportIssue" styleClass="quick-action-button" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+                    </VBox>
+                </VBox>
+            </HBox>
+
+            <!-- ============================================================= -->
+            <!-- ABOUT (reached from sidebar footer button, not a "main" page)  -->
+            <!-- ============================================================= -->
+            <VBox fx:id="aboutPageRoot" styleClass="page, about-page" alignment="CENTER" spacing="12" visible="false" managed="false">
+                <Label text="About Contact Network" styleClass="about-title"/>
+                <Label fx:id="aboutSubtitleLabel" text="Built for professionals who value their relationships." styleClass="about-subtitle"/>
+            </VBox>
+
+        </StackPane>
+    </center>
+</BorderPane>
