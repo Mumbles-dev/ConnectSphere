@@ -1,983 +1,1278 @@
 package com.connectsphere.controller;
 
-import javafx.animation.PauseTransition;
+import com.connectsphere.dao.ConnectionDAO;
+import com.connectsphere.dao.ContactDAO;
+import com.connectsphere.dao.DatabaseManager;
+import com.connectsphere.model.Connection;
+import com.connectsphere.model.Contact;
+import com.connectsphere.util.BFSPathFinder;
+import com.connectsphere.util.ContactGraph;
+import com.connectsphere.util.PhosphorIcons;
+
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
+import javafx.scene.Group;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
-import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Line;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.SVGPath;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
-import javafx.util.Duration;
-import com.connectsphere.util.Icons;
+import javafx.stage.FileChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import javafx.collections.transformation.FilteredList;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.shape.Circle;
 
-import com.connectsphere.model.Contact;
-import com.connectsphere.dao.ContactDAO;
-import com.connectsphere.dao.ConnectionDAO;
-import com.connectsphere.dao.DatabaseManager;
-import com.connectsphere.util.ContactGraph;
-import com.connectsphere.util.BFSPathFinder;
-
+import java.io.File;
+import java.io.IOException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * MainController
+ * MainController — single controller behind MainView.fxml.
  *
- * Single controller backing Main.fxml. Handles page navigation between the
- * Contacts / Connection Finder / Settings views (plus the About panel), and
- * now pulls every piece of contact/connection data from SQLite via the
- * ContactDAO / ConnectionDAO / ContactGraph / BFSPathFinder classes.
+ * Pages: Contacts / Connection Finder / Settings (switched inside #pageStack).
  *
- * NOT wired here (see chat notes): Theme + accent color persistence,
- * Backup/Restore file I/O, Open Log File / Check for Updates / Report an
- * Issue.
+ * DATA LAYER (carried over from the old controller, unchanged in spirit):
+ *  - SQLite through ContactDAO / ConnectionDAO; schema created by DatabaseManager.initializeDatabase().
+ *  - The controller never holds a JDBC connection and never closes one: every DAO call is
+ *    self-contained, so there is nothing to close here. (Shortest paths: ContactGraph + BFSPathFinder.)
+ *  - allContactsData is the single in-memory copy of the contacts table. Favorites, Recently Added,
+ *    the directory, search and the Finder combos are all derived from it, so every view shares the
+ *    same Contact instances (a favorite toggle mutates one object and every view re-renders from it).
+ *  - reloadAllFromDatabase() is the only place that re-queries; call it after any DB mutation.
  */
 public class MainController {
 
-    // ─────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════
     // DATA LAYER
-    // ─────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════
     private final ContactDAO contactDAO = new ContactDAO();
     private final ConnectionDAO connectionDAO = new ConnectionDAO();
 
-    // Master copy of every contact, kept in sync after every add/edit/delete.
-    // Used to populate the Finder combos and to resolve BFS result ids back
-    // into Contact objects without extra DB round-trips.
     private final ObservableList<Contact> allContactsData = FXCollections.observableArrayList();
     private final Map<Integer, Contact> contactsById = new HashMap<>();
 
-    // ─────────────────────────────────────────────────────────────────
-    // Icons
-    // ─────────────────────────────────────────────────────────────────
-    @FXML private SVGPath logoIcon;
-    @FXML private SVGPath searchIcon;
-    @FXML private SVGPath plusIcon;
-    @FXML private SVGPath arrowDownIcon;
-    @FXML private SVGPath findConnectionIcon;
-    @FXML private SVGPath checkIcon;
-    @FXML private SVGPath xIcon;
-    @FXML private SVGPath sunIcon;
-    @FXML private SVGPath listIcon;
-    @FXML private SVGPath databaseIcon;
-    @FXML private SVGPath downloadIcon;
-    @FXML private SVGPath uploadIcon;
-    @FXML private SVGPath trashIcon;
-    @FXML private SVGPath warningIcon;
+    /** Snapshot of the connections table + adjacency built from it (graph drawing, 2-hop lookups). */
+    private List<Connection> connectionsCache = new ArrayList<>();
+    private final Map<Integer, Set<Integer>> links = new HashMap<>();
 
-    // ─────────────────────────────────────────────────────────────────
-    // Sidebar / navigation
-    // ─────────────────────────────────────────────────────────────────
-    @FXML private Button navContactsBtn;
-    @FXML private Button navFinderBtn;
-    @FXML private Button navSettingsBtn;
-    @FXML private Button navAboutBtn;
+    // Contacts page state
+    private int selectedId = -1;
+    private boolean favoritesOnly = false;
+    private boolean sortAscending = true;
+    private String query = "";
 
-    @FXML private HBox contactsPageRoot;
-    @FXML private HBox finderPageRoot;
-    @FXML private HBox settingsPageRoot;
-    @FXML private VBox aboutPageRoot;
+    // Settings state
+    private enum DisplayFormat { PHONE, EMAIL, BOTH }
+    private DisplayFormat displayFormat = DisplayFormat.PHONE;
+    private static final String BACKUP_HEADER = "CONTACT_NETWORK_BACKUP_V1";
 
-    // ─────────────────────────────────────────────────────────────────
-    // Contacts page
-    // ─────────────────────────────────────────────────────────────────
-    @FXML private TextField contactsSearchField;
-    @FXML private Label contactsCountLabel;
-    @FXML private Label allContactsSectionLabel;
-    @FXML private VBox favoritesSectionBox;   // wraps the whole Favorite Contacts section — hidden while searching
-    @FXML private HBox favoritesContainer;    // holds the favorite-card row, inside a horizontal ScrollPane
-    @FXML private VBox recentSectionBox;      // wraps the whole Recently Added section — hidden while searching
-    @FXML private ListView<Contact> recentContactsListView;
-    @FXML private ListView<Object> allContactsListView; // mixed: AlphaHeader rows + Contact rows
+    // Connection Finder state
+    private Contact lastA, lastB;
+    private List<Contact> lastPath;
+    private double zoom = 1.0;
+    private final Canvas gridCanvas = new Canvas();
+    private final Pane zoomLayer = new Pane();
 
-    // ─────────────────────────────────────────────────────────────────
-    // Connection Finder page
-    // ─────────────────────────────────────────────────────────────────
-    @FXML private ComboBox<Contact> startContactCombo;
-    @FXML private ComboBox<Contact> endContactCombo;
-    @FXML private Button findConnectionButton;
+    // Add / Edit form state
+    private Contact formContact;                                   // null = adding
+    private final Set<Integer> formSelectedIds = new HashSet<>();  // ticked connections
+    private Set<Integer> formPreviousIds = Collections.emptySet(); // connections before editing
+    private final ObservableList<Contact> formCandidateData = FXCollections.observableArrayList();
+    private FilteredList<Contact> formCandidates;
+    private Image formPhoto;
+    private static final boolean REQUIRE_PHONE = true;            // the form marks only Email as "Optional"
 
-    @FXML private VBox resultIdleBox;
-    @FXML private VBox resultFoundBox;
-    @FXML private VBox resultNotFoundBox;
+    // ═════════════════════════════════════════════════════════════════
+    // FXML — shell
+    // ═════════════════════════════════════════════════════════════════
+    @FXML private HBox root;
+    @FXML private Button navContactsBtn, navFinderBtn, navSettingsBtn;
+    @FXML private Label navContactsCount, statContacts, statConnections;
+    @FXML private Label breadcrumbCurrent, headerSummary;
+    @FXML private StackPane pageStack;
+    @FXML private ScrollPane contactsPage;
+    @FXML private VBox finderPage, settingsPage;
 
-    @FXML private VBox pathNodesContainer;
-    @FXML private Label distanceValueLabel;
-    @FXML private Label distanceUnitLabel;
-    @FXML private Label notFoundMessageLabel;
+    // FXML — Contacts page
+    @FXML private Label favoritesCount, recentCount, footerCount;
+    @FXML private FlowPane favoritesBox;
+    @FXML private VBox recentList, directoryList;
+    @FXML private VBox listsSection, favoritesSection, recentSection;
+    @FXML private Button sortBtn;
+    @FXML private TextField searchField;
+    @FXML private ToggleButton tabAll, tabFav;
+    @FXML private VBox detailContent, directList, indirectList;
+    @FXML private StackPane detailAvatarHolder, detailFavoriteIcon;
+    @FXML private Label detailName, detailPhone, detailAdded, directCount, indirectCount, detailFavoriteText;
+    @FXML private HBox detailFavoriteTag;
 
-    @FXML private Label networkStatsLabel;
-    @FXML private Canvas networkCanvas;
-    @FXML private Label networkHintLabel;
+    // FXML — Connection Finder
+    @FXML private ComboBox<Contact> fromCombo, toCombo;
+    @FXML private Button findBtn;
+    @FXML private Label finderSearchHint;
+    @FXML private Label resultStatus, resultTitle, resultDesc;
+    @FXML private HBox statsBox, pathNote;
+    @FXML private Label statDistance, statDistanceLabel, statMutual, statMutualLabel;
+    @FXML private Label pathHeader, pathNoteLabel, pathPill, pathSummary, networkSubtitle;
+    @FXML private VBox pathList;
+    @FXML private Pane graphPane;
 
-    // ─────────────────────────────────────────────────────────────────
-    // Settings page
-    // ─────────────────────────────────────────────────────────────────
-    @FXML private ToggleButton compactListToggle;
-    @FXML private ToggleButton showFavoritesToggle;
-    @FXML private ToggleButton showRecentToggle;
-    @FXML private ComboBox<String> displayFormatCombo;
+    // FXML — Settings
+    @FXML private RadioButton fmtPhone, fmtEmail, fmtBoth;
+    @FXML private ToggleButton favToggle, recentToggle;
+    @FXML private Label favToggleLabel, recentToggleLabel;
 
-    @FXML private Label dbStatusValueLabel;
-    @FXML private Label dbNameValueLabel;
-    @FXML private Label totalContactsValueLabel;
-    @FXML private Label totalConnectionsValueLabel;
+    // FXML — Add / Edit contact page
+    @FXML private VBox formPage, addSideCard, editSideCard, previewBox;
+    @FXML private Button backButton, uploadPhotoButton, cancelButton, saveButton;
+    @FXML private Label titleLabel, subtitleLabel, photoInitials, photoHint, photoError;
+    @FXML private Label nameError, phoneError, emailError;
+    @FXML private Label selectedCountLabel, indirectNoteLabel, footerNoteLabel, summaryLabel;
+    @FXML private Label sideAvatarInitials, sideNameLabel, sidePhoneLabel, addedOnLabel;
+    @FXML private Label pathTitleLabel, pathDescriptionLabel, pathFootnoteLabel;
+    @FXML private StackPane photoPane, sideAvatarPane;
+    @FXML private SVGPath photoPlaceholder;
+    @FXML private ImageView photoView, sideAvatarView;
+    @FXML private TextField nameField, phoneField, emailField, connSearchField;
+    @FXML private ToggleButton favoriteToggle;
+    @FXML private ListView<Contact> contactListView;
+    @FXML private HBox favoriteTagBox;
 
-    @FXML private Button backupButton;
-    @FXML private Button restoreButton;
-
-    @FXML private StackPane clearDataStack;
-    @FXML private HBox clearDataNormalBox;
-    @FXML private VBox clearDataWarningBox;
-    @FXML private Label clearDataWarningMessage;
-
-    @FXML private Label appVersionLabel;
-    @FXML private Label appBuildLabel;
-    @FXML private Label appPlatformLabel;
-    @FXML private Label appDbEngineLabel;
-    @FXML private Label appLastBackupLabel;
-
-    // ─────────────────────────────────────────────────────────────────
-    // Init
-    // ─────────────────────────────────────────────────────────────────
-
+    // ═════════════════════════════════════════════════════════════════
+    // INIT
+    // ═════════════════════════════════════════════════════════════════
     @FXML
     private void initialize() {
-        // Icons
-        setIcon(logoIcon, Icons.USER, 32);
-        setIcon(searchIcon, Icons.MAGNIFYING_GLASS, 16);
-        setIcon(plusIcon, Icons.PLUS, 15);
-        setIcon(arrowDownIcon, Icons.ARROW_DOWN, 15);
-        setIcon(findConnectionIcon, Icons.MAGNIFYING_GLASS, 15);
-        setIcon(checkIcon, Icons.CHECK, 15);
-        setIcon(xIcon, Icons.X, 15);
-        setIcon(sunIcon, Icons.SUN, 15);
-        setIcon(listIcon, Icons.LIST, 15);
-        setIcon(databaseIcon, Icons.DATABASE, 15);
-        setIcon(downloadIcon, Icons.DOWNLOAD, 15);
-        setIcon(uploadIcon, Icons.UPLOAD, 15);
-        setIcon(trashIcon, Icons.TRASH, 15);
-        setIcon(warningIcon, Icons.WARNING, 15);
+        applyPhosphorIcons(root);
 
-        // Static UI option lists (app configuration choices, not DB records).
-        displayFormatCombo.getItems().setAll("Name + Phone", "Name + Email", "Name + Phone + Email");
-        displayFormatCombo.getSelectionModel().selectFirst();
-        displayFormatCombo.getSelectionModel().selectedItemProperty()
-                .addListener((obs, oldVal, newVal) -> refreshVisibleListCells());
+        ToggleGroup tabs = new ToggleGroup();
+        tabAll.setToggleGroup(tabs);
+        tabFav.setToggleGroup(tabs);
 
-        // Make sure the schema exists before we touch it (safe to call
-        // repeatedly — uses CREATE TABLE IF NOT EXISTS).
+        ToggleGroup formats = new ToggleGroup();
+        fmtPhone.setToggleGroup(formats);
+        fmtEmail.setToggleGroup(formats);
+        fmtBoth.setToggleGroup(formats);
+
+        // Make sure the schema exists before touching it (CREATE TABLE IF NOT EXISTS — safe to repeat).
         DatabaseManager.initializeDatabase();
 
-        setupContactListCells();
+        // Live search over the shared in-memory cache.
+        searchField.textProperty().addListener((o, a, b) -> {
+            query = b == null ? "" : b.trim().toLowerCase();
+            applyListVisibility();
+            renderDirectory();
+        });
 
-        // Live search: hits the database directly through ContactDAO,
-        // rather than filtering an in-memory copy.
-        contactsSearchField.textProperty().addListener((obs, oldVal, newVal) -> filterContacts(newVal));
+        detailFavoriteTag.setCursor(Cursor.HAND);
+        detailFavoriteTag.setOnMouseClicked(e -> { Contact c = selected(); if (c != null) toggleFavorite(c); });
 
-        // Keep the "Find Connection" button disabled until both contacts
-        // are chosen and they aren't the same contact.
-        findConnectionButton.disableProperty().bind(
-                startContactCombo.getSelectionModel().selectedItemProperty().isNull()
-                        .or(endContactCombo.getSelectionModel().selectedItemProperty().isNull())
-        );
+        setupFinder();
+        setupContactForm();
 
-        resetFinderResultState();
-
-        // Initial data load from SQLite.
-        reloadAllContactsFromDatabase();
-        refreshRecentSection();
-        refreshDatabaseStats();
-        drawNetworkGraph(Collections.emptyList());
+        showPage(contactsPage);
+        reloadAllFromDatabase();
     }
 
-    private void setIcon(SVGPath path, String content, double sizePx) {
-        path.setContent(content);
-        double s = sizePx / 256.0;
-        path.setScaleX(s);
-        path.setScaleY(s);
-    }
-
-    // ═════════════════════════════════════════════════════════════════
-    // PAGE NAVIGATION
-    // ═════════════════════════════════════════════════════════════════
-
-    @FXML
-    private void showContactsPage() {
-        setActivePage(contactsPageRoot);
-        setActiveNavButton(navContactsBtn);
-    }
-
-    @FXML
-    private void showFinderPage() {
-        setActivePage(finderPageRoot);
-        setActiveNavButton(navFinderBtn);
-        // Combos might be stale if contacts changed on another page since
-        // the last visit — cheap to refresh every time we show this page.
-        populateFinderComboItems();
-    }
-
-    @FXML
-    private void showSettingsPage() {
-        setActivePage(settingsPageRoot);
-        setActiveNavButton(navSettingsBtn);
-        refreshDatabaseStats();
-    }
-
-    @FXML
-    private void showAboutPage() {
-        setActivePage(aboutPageRoot);
-        setActiveNavButton(navAboutBtn);
-    }
-
-    private void setActivePage(Region pageToShow) {
-        for (Region page : new Region[]{contactsPageRoot, finderPageRoot, settingsPageRoot, aboutPageRoot}) {
-            boolean isTarget = (page == pageToShow);
-            page.setVisible(isTarget);
-            page.setManaged(isTarget);
+    private void setupFinder() {
+        for (ComboBox<Contact> cb : List.of(fromCombo, toCombo)) {
+            cb.setItems(allContactsData);
+            cb.setCellFactory(v -> contactCell(false));
+            cb.setButtonCell(contactCell(true));
         }
-    }
+        // "Find connection" stays disabled until both contacts are chosen.
+        findBtn.disableProperty().bind(fromCombo.valueProperty().isNull().or(toCombo.valueProperty().isNull()));
 
-    private void setActiveNavButton(Button activeButton) {
-        for (Button b : new Button[]{navContactsBtn, navFinderBtn, navSettingsBtn, navAboutBtn}) {
-            b.getStyleClass().remove("nav-button-active");
-        }
-        if (!activeButton.getStyleClass().contains("nav-button-active")) {
-            activeButton.getStyleClass().add("nav-button-active");
-        }
+        graphPane.getChildren().addAll(gridCanvas, zoomLayer);
+        gridCanvas.setMouseTransparent(true);
+        Rectangle clip = new Rectangle();
+        clip.widthProperty().bind(graphPane.widthProperty());
+        clip.heightProperty().bind(graphPane.heightProperty());
+        graphPane.setClip(clip);
+        graphPane.widthProperty().addListener((o, a, b) -> onGraphResized());
+        graphPane.heightProperty().addListener((o, a, b) -> onGraphResized());
     }
 
     // ═════════════════════════════════════════════════════════════════
-    // CONTACTS PAGE FUNCTIONS
+    // NAVIGATION
+    // ═════════════════════════════════════════════════════════════════
+    @FXML private void onNavContacts() { showPage(contactsPage); }
+    @FXML private void onNavFinder()   { showPage(finderPage); }
+    @FXML private void onNavSettings() { showPage(settingsPage); }
+
+    private void showPage(Node page) {
+        for (Node n : pageStack.getChildren()) {
+            boolean on = n == page;
+            n.setVisible(on);
+            n.setManaged(on);
+        }
+        // the form is a sub page of Contacts, so keep "Contacts" highlighted
+        setActive(navContactsBtn, page == contactsPage || page == formPage);
+        setActive(navFinderBtn, page == finderPage);
+        setActive(navSettingsBtn, page == settingsPage);
+
+        if (page == contactsPage) { breadcrumbCurrent.setText("Contacts"); contactsPage.setVvalue(0); }
+        else if (page == finderPage) { breadcrumbCurrent.setText("Connection Finder"); renderFinder(); }
+        else if (page == settingsPage) breadcrumbCurrent.setText("Settings");
+        else if (page == formPage) breadcrumbCurrent.setText(formContact == null ? "Add contact" : "Edit contact");
+    }
+
+    private void setActive(Button b, boolean active) {
+        b.getStyleClass().remove("active");
+        if (active) b.getStyleClass().add("active");
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // DATABASE → UI
     // ═════════════════════════════════════════════════════════════════
 
-    /**
-     * Pulls every contact from SQLite and refreshes every dependent UI bit.
-     * This is the ONLY place that re-queries the contacts table itself —
-     * Recently Added, Favorites, and the All Contacts/search list are all
-     * derived from allContactsData below, so every view shares the exact
-     * same Contact objects. That matters: a favorite toggle mutates one
-     * Contact instance in place, and every view showing that same instance
-     * picks up the change the moment it's re-rendered — no view can hold a
-     * stale, independently-queried copy of the same row.
-     */
-    private void reloadAllContactsFromDatabase() {
+    /** The ONLY place that re-queries SQLite. Rebuilds the cache, then re-renders every page. */
+    private void reloadAllFromDatabase() {
+        int fromId = idOf(fromCombo.getValue()), toId = idOf(toCombo.getValue());
+
         List<Contact> contacts = contactDAO.getAllContacts();
-
+        fromCombo.setValue(null);
+        toCombo.setValue(null);
         allContactsData.setAll(contacts);
         contactsById.clear();
-        for (Contact c : contacts) {
-            contactsById.put(c.getId(), c);
+        for (Contact c : contacts) contactsById.put(c.getId(), c);
+
+        connectionsCache = connectionDAO.getAllConnections();
+        links.clear();
+        for (Contact c : contacts) links.put(c.getId(), new LinkedHashSet<>());
+        for (Connection cn : connectionsCache) {
+            Set<Integer> a = links.get(cn.getContactId1()), b = links.get(cn.getContactId2());
+            if (a == null || b == null) continue;
+            a.add(cn.getContactId2());
+            b.add(cn.getContactId1());
         }
 
-        // If the search field has text, keep showing filtered results;
-        // otherwise show everything.
-        filterContacts(contactsSearchField.getText());
+        // keep the Finder picks if those contacts still exist
+        fromCombo.setValue(contactsById.get(fromId));
+        toCombo.setValue(contactsById.get(toId));
 
-        contactsCountLabel.setText(contacts.size() + (contacts.size() == 1 ? " Contact" : " Contacts"));
-        populateFinderComboItems();
-        refreshFavoritesSection();
+        if (!contactsById.containsKey(selectedId)) selectedId = contacts.isEmpty() ? -1 : contacts.get(0).getId();
+        refreshAll();
     }
 
-    /** Re-renders Recently Added, Favorites, and All Contacts/search from the shared in-memory cache. */
-    private void refreshAllContactViews() {
-        refreshFavoritesSection();
-        refreshRecentSection();
-        filterContacts(contactsSearchField.getText());
+    private int idOf(Contact c) { return c == null ? -1 : c.getId(); }
+
+    private Contact selected() { return contactsById.get(selectedId); }
+
+    private int connectionCount() { return connectionsCache.size(); }
+
+    /** Re-render everything from the in-memory cache (no DB round trip except the Finder's BFS). */
+    private void refreshAll() {
+        int total = allContactsData.size();
+        long favs = allContactsData.stream().filter(Contact::isFavorite).count();
+
+        navContactsCount.setText(String.valueOf(total));
+        statContacts.setText(String.valueOf(total));
+        statConnections.setText(String.valueOf(connectionCount()));
+        headerSummary.setText(plural(total, "contact") + " · " + plural(connectionCount(), "connection"));
+        tabAll.setText("All contacts  " + total);
+        tabFav.setText("Favorites  " + favs);
+
+        applyListVisibility();
+        renderFavorites();
+        renderRecent();
+        renderDirectory();
+        renderDetails();
+        renderFinder();
     }
 
-    /** Newest-first slice of the shared cache — no DB round trip, so it reuses the same Contact objects. */
-    private void refreshRecentSection() {
-        List<Contact> recent = allContactsData.stream()
-                .sorted(Comparator.comparing(Contact::getId).reversed())
-                .limit(10)
-                .collect(Collectors.toList());
-        recentContactsListView.setItems(FXCollections.observableArrayList(recent));
-    }
-
-    /** Favorited subset of the shared cache, rebuilt into the favorite-card row. */
-    private void refreshFavoritesSection() {
-        List<Contact> favorites = allContactsData.stream()
-                .filter(Contact::isFavorite)
-                .sorted(Comparator.comparing(
-                        c -> c.getName() == null ? "" : c.getName(),
-                        String.CASE_INSENSITIVE_ORDER))
-                .collect(Collectors.toList());
-
-        favoritesContainer.getChildren().clear();
-
-        if (favorites.isEmpty()) {
-            Label empty = new Label("No favorites yet. Tap the star on any contact to pin them here.");
-            empty.getStyleClass().add("empty-state-label");
-            favoritesContainer.getChildren().add(empty);
-            return;
-        }
-        for (Contact c : favorites) {
-            favoritesContainer.getChildren().add(buildFavoriteCard(c));
-        }
-    }
-
-    /** One card in the horizontal Favorite Contacts row: avatar, name, phone, and an un-favorite star. */
-    private VBox buildFavoriteCard(Contact contact) {
-        Label avatarLabel = new Label(initialsOf(contact.getName()));
-        avatarLabel.getStyleClass().add("contact-avatar-label");
-        StackPane avatarBox = new StackPane(avatarLabel);
-        avatarBox.getStyleClass().add("contact-avatar");
-        avatarBox.setMinSize(44, 44);
-        avatarBox.setMaxSize(44, 44);
-
-        Label nameLabel = new Label(contact.getName());
-        nameLabel.getStyleClass().add("contact-row-name");
-        nameLabel.setWrapText(true);
-        nameLabel.setAlignment(Pos.CENTER);
-        nameLabel.setMaxWidth(96);
-
-        Label phoneLabel = new Label(nullToDashStatic(contact.getPhone()));
-        phoneLabel.getStyleClass().add("contact-row-detail");
-        phoneLabel.setWrapText(true);
-        phoneLabel.setAlignment(Pos.CENTER);
-        phoneLabel.setMaxWidth(96);
-
-        FavoriteStarControl star = buildFavoriteStarControl(() -> contact);
-
-        VBox card = new VBox(6, avatarBox, nameLabel, phoneLabel, star.button);
-        card.getStyleClass().add("favorite-card");
-        card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(120);
-
-        card.setOnMouseClicked(event -> {
-            if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-                openContactDialog(contact);
-            }
-        });
-        return card;
-    }
-
-    private String nullToDashStatic(String s) {
-        return (s == null || s.isBlank()) ? "—" : s;
-    }
-
-    /** Bundles a star toggle Button together with the refresh callback that re-syncs its icon shape. */
-    private static class FavoriteStarControl {
-        final Button button;
-        final Runnable refresh;
-        FavoriteStarControl(Button button, Runnable refresh) {
-            this.button = button;
-            this.refresh = refresh;
-        }
-    }
-
-    /**
-     * Builds a star toggle button (yellow; outline when not favorited,
-     * filled once favorited) wired to ContactDAO.setFavorite(). The
-     * supplier is read at click time so the same button works correctly
-     * inside recycled ListCells, where the underlying Contact changes.
-     *
-     * IMPORTANT: the button and its icon are both given a fixed, small
-     * size explicitly (in Java and in CSS). Without that, a Button sizes
-     * its graphic based on the SVGPath's *unscaled* bounds (256x256),
-     * not the visual scale transform applied to it — every other icon in
-     * this app is wrapped the same way for that exact reason.
-     *
-     * The caller MUST invoke the returned refresh() every time a cell is
-     * re-bound to a (possibly different) contact — e.g. from updateItem —
-     * or a recycled cell will keep showing whichever star shape was last
-     * drawn on it, not the shape matching its current contact.
-     */
-    private FavoriteStarControl buildFavoriteStarControl(java.util.function.Supplier<Contact> itemSupplier) {
-        SVGPath starIcon = new SVGPath();
-        starIcon.getStyleClass().add("favorite-star-icon");
-        double s = 15.0 / 256.0;
-        starIcon.setScaleX(s);
-        starIcon.setScaleY(s);
-
-        StackPane iconBox = new StackPane(starIcon);
-        iconBox.getStyleClass().add("favorite-star-icon-box");
-        iconBox.setMinSize(16, 16);
-        iconBox.setMaxSize(16, 16);
-
-        Button button = new Button();
-        button.getStyleClass().add("favorite-star-button");
-        button.setGraphic(iconBox);
-        button.setMinSize(30, 30);
-        button.setMaxSize(30, 30);
-        button.setPrefSize(30, 30);
-
-        Runnable refresh = () -> {
-            Contact c = itemSupplier.get();
-            starIcon.setContent(c != null && c.isFavorite() ? Icons.STAR_FILL : Icons.STAR);
-        };
-        refresh.run();
-
-        button.setOnAction(e -> {
-            Contact c = itemSupplier.get();
-            if (c == null) return;
-            boolean newState = !c.isFavorite();
-            try {
-                contactDAO.setFavorite(c.getId(), newState);
-                c.setFavorite(newState);
-            } catch (RuntimeException ex) {
-                showErrorAlert("Could not update favorite", ex.getMessage());
-                return;
-            }
-            refresh.run();
-            refreshAllContactViews();
-        });
-
-        // Stop the click from also bubbling up to the row's own
-        // double-click-to-edit handler.
-        button.addEventHandler(MouseEvent.MOUSE_CLICKED, MouseEvent::consume);
-
-        return new FavoriteStarControl(button, refresh);
-    }
-
-    /** Builds the shared cell factory used by both contact ListViews. */
-    private void setupContactListCells() {
-        allContactsListView.setCellFactory(lv -> new GroupedContactCell());
-        recentContactsListView.setCellFactory(lv -> new ContactListCell());
-    }
-
-    /** Forces both ListViews to redraw their visible cells (e.g. after a display-format change). */
-    private void refreshVisibleListCells() {
-        allContactsListView.refresh();
-        recentContactsListView.refresh();
-    }
-
-    /** Modern card row: avatar circle with initials, name, phone/email detail, date added, favorite star. */
-    private class ContactListCell extends ListCell<Contact> {
-        private final Label avatarLabel = new Label();
-        private final StackPane avatarBox = new StackPane(avatarLabel);
-        private final Label nameLabel = new Label();
-        private final Label detailLabel = new Label();
-        private final VBox textBox = new VBox(2, nameLabel, detailLabel);
-        private final Label dateAddedLabel = new Label();
-        private final FavoriteStarControl star = buildFavoriteStarControl(this::getItem);
-        private final HBox row = new HBox(12, avatarBox, textBox, dateAddedLabel, star.button);
-
-        ContactListCell() {
-            avatarBox.getStyleClass().add("contact-avatar");
-            avatarLabel.getStyleClass().add("contact-avatar-label");
-            nameLabel.getStyleClass().add("contact-row-name");
-            detailLabel.getStyleClass().add("contact-row-detail");
-            dateAddedLabel.getStyleClass().add("contact-row-date");
-            row.getStyleClass().add("contact-row");
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(textBox, Priority.ALWAYS);
-            setPadding(new Insets(3, 0, 3, 0));
-
-            setOnMouseClicked(event -> {
-                Contact item = getItem();
-                if (item == null) return;
-                if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-                    openContactDialog(item);
-                }
-            });
-
-            setContextMenu(buildRowContextMenu());
-        }
-
-        private ContextMenu buildRowContextMenu() {
-            MenuItem edit = new MenuItem("Edit Contact");
-            edit.setOnAction(e -> { if (getItem() != null) openContactDialog(getItem()); });
-
-            MenuItem delete = new MenuItem("Delete Contact");
-            delete.setOnAction(e -> { if (getItem() != null) confirmAndDeleteContact(getItem()); });
-
-            return new ContextMenu(edit, delete);
-        }
-
-        @Override
-        protected void updateItem(Contact contact, boolean empty) {
-            super.updateItem(contact, empty);
-            if (empty || contact == null) {
-                setGraphic(null);
-                return;
-            }
-            nameLabel.setText(contact.getName());
-            avatarLabel.setText(initialsOf(contact.getName()));
-            dateAddedLabel.setText("Added " + contact.getFormattedDateAdded());
-            star.refresh.run();
-
-            String format = displayFormatCombo.getValue();
-            String detail;
-            if ("Name + Email".equals(format)) {
-                detail = nullToDash(contact.getEmail());
-            } else if ("Name + Phone + Email".equals(format)) {
-                detail = nullToDash(contact.getPhone()) + "  ·  " + nullToDash(contact.getEmail());
-            } else {
-                detail = nullToDash(contact.getPhone());
-            }
-            detailLabel.setText(detail);
-            setGraphic(row);
-        }
-
-        private String nullToDash(String s) {
-            return (s == null || s.isBlank()) ? "—" : s;
-        }
-    }
-
-
-    /** A small marker object: one "A", "B", "#" ... divider row in the grouped All Contacts list. */
-    private static class AlphaHeader {
-        final String letter;
-        final int count;
-        AlphaHeader(String letter, int count) {
-            this.letter = letter;
-            this.count = count;
-        }
-    }
-
-    /**
-     * All Contacts list cell that renders either an AlphaHeader divider row
-     * or a normal contact card, depending on what's in that slot. Used only
-     * by allContactsListView, which holds a mix of both (see
-     * buildGroupedItems). recentContactsListView keeps using the simpler
-     * Contact-only ContactListCell above since it isn't grouped.
-     */
-    private class GroupedContactCell extends ListCell<Object> {
-        // --- header row ---
-        private final Label headerLetter = new Label();
-        private final Label headerCount = new Label();
-        private final Region headerSpacer = new Region();
-        private final HBox headerRow = new HBox(8, headerLetter, headerSpacer, headerCount);
-
-        // --- contact row (same look as ContactListCell) ---
-        private final Label avatarLabel = new Label();
-        private final StackPane avatarBox = new StackPane(avatarLabel);
-        private final Label nameLabel = new Label();
-        private final Label detailLabel = new Label();
-        private final VBox textBox = new VBox(2, nameLabel, detailLabel);
-        private final Label dateAddedLabel = new Label();
-        private final FavoriteStarControl star = buildFavoriteStarControl(
-                () -> getItem() instanceof Contact c ? c : null);
-        private final HBox contactRow = new HBox(12, avatarBox, textBox, dateAddedLabel, star.button);
-
-        private final ContextMenu rowContextMenu;
-
-        GroupedContactCell() {
-            headerRow.getStyleClass().add("alpha-header-row");
-            headerLetter.getStyleClass().add("alpha-header-letter");
-            headerCount.getStyleClass().add("alpha-header-count");
-            headerRow.setAlignment(Pos.CENTER_LEFT);
-            headerRow.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(headerSpacer, Priority.ALWAYS);
-
-            avatarBox.getStyleClass().add("contact-avatar");
-            avatarLabel.getStyleClass().add("contact-avatar-label");
-            nameLabel.getStyleClass().add("contact-row-name");
-            detailLabel.getStyleClass().add("contact-row-detail");
-            dateAddedLabel.getStyleClass().add("contact-row-date");
-            contactRow.getStyleClass().add("contact-row");
-            contactRow.setAlignment(Pos.CENTER_LEFT);
-            contactRow.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(textBox, Priority.ALWAYS);
-            setPadding(new Insets(3, 0, 3, 0));
-
-            rowContextMenu = buildRowContextMenu();
-
-            setOnMouseClicked(event -> {
-                if (!(getItem() instanceof Contact contact)) return;
-                if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-                    openContactDialog(contact);
-                }
-            });
-        }
-
-        private ContextMenu buildRowContextMenu() {
-            MenuItem edit = new MenuItem("Edit Contact");
-            edit.setOnAction(e -> { if (getItem() instanceof Contact c) openContactDialog(c); });
-
-            MenuItem delete = new MenuItem("Delete Contact");
-            delete.setOnAction(e -> { if (getItem() instanceof Contact c) confirmAndDeleteContact(c); });
-
-            return new ContextMenu(edit, delete);
-        }
-
-        @Override
-        protected void updateItem(Object item, boolean empty) {
-            super.updateItem(item, empty);
-
-            if (empty || item == null) {
-                setGraphic(null);
-                setContextMenu(null);
-                return;
-            }
-
-            if (item instanceof AlphaHeader header) {
-                headerLetter.setText(header.letter);
-                headerCount.setText(header.count + (header.count == 1 ? " contact" : " contacts"));
-                setGraphic(headerRow);
-                setContextMenu(null);
-                return;
-            }
-
-            Contact contact = (Contact) item;
-            nameLabel.setText(contact.getName());
-            avatarLabel.setText(initialsOf(contact.getName()));
-            dateAddedLabel.setText("Added " + contact.getFormattedDateAdded());
-            star.refresh.run();
-
-            String format = displayFormatCombo.getValue();
-            String detail;
-            if ("Name + Email".equals(format)) {
-                detail = nullToDash(contact.getEmail());
-            } else if ("Name + Phone + Email".equals(format)) {
-                detail = nullToDash(contact.getPhone()) + "  ·  " + nullToDash(contact.getEmail());
-            } else {
-                detail = nullToDash(contact.getPhone());
-            }
-            detailLabel.setText(detail);
-            setGraphic(contactRow);
-            setContextMenu(rowContextMenu);
-        }
-
-        private String nullToDash(String s) {
-            return (s == null || s.isBlank()) ? "—" : s;
-        }
-    }
-
-    /**
-     * Sorts the given contacts by name and interleaves AlphaHeader divider
-     * rows ("A" · 3 contacts, "B" · 1 contact, ...) ahead of each letter
-     * group, producing the mixed list allContactsListView displays.
-     */
-    private ObservableList<Object> buildGroupedItems(List<Contact> contacts) {
-        List<Contact> sorted = new ArrayList<>(contacts);
-        sorted.sort(Comparator.comparing(
-                c -> c.getName() == null ? "" : c.getName(),
-                String.CASE_INSENSITIVE_ORDER));
-
-        // Count contacts per letter first, so each header can show its total.
-        Map<String, Integer> countsByLetter = new LinkedHashMap<>();
-        for (Contact c : sorted) {
-            countsByLetter.merge(firstLetterOf(c.getName()), 1, Integer::sum);
-        }
-
-        ObservableList<Object> items = FXCollections.observableArrayList();
-        String currentLetter = null;
-        for (Contact c : sorted) {
-            String letter = firstLetterOf(c.getName());
-            if (!letter.equals(currentLetter)) {
-                items.add(new AlphaHeader(letter, countsByLetter.get(letter)));
-                currentLetter = letter;
-            }
-            items.add(c);
-        }
-        return items;
-    }
-
-    /** First letter of a name, uppercased; "#" for blank names or names starting with a non-letter. */
-    private String firstLetterOf(String name) {
-        if (name == null || name.isBlank()) return "#";
-        char ch = Character.toUpperCase(name.trim().charAt(0));
-        return Character.isLetter(ch) ? String.valueOf(ch) : "#";
-    }
+    // ═════════════════════════════════════════════════════════════════
+    // CONTACTS PAGE — actions
+    // ═════════════════════════════════════════════════════════════════
 
     @FXML
     private void onAddContact() {
-        openContactDialog(null);
+        openContactForm(null);
+    }
+
+    @FXML
+    private void onEditContact() {
+        Contact c = selected();
+        if (c != null) openContactForm(c);
+    }
+
+    /** "Explore connections": jump to the Finder with the selected contact as the starting point. */
+    @FXML
+    private void onExploreConnections() {
+        Contact c = selected();
+        if (c == null) return;
+        fromCombo.setValue(c);
+        if (idOf(toCombo.getValue()) == c.getId()) toCombo.setValue(null);
+        showPage(finderPage);
+    }
+
+    @FXML
+    private void onToggleSort() {
+        sortAscending = !sortAscending;
+        sortBtn.setText(sortAscending ? "Name A–Z" : "Name Z–A");
+        renderDirectory();
+    }
+
+    @FXML private void onFilterAll()       { favoritesOnly = false; tabAll.setSelected(true); renderDirectory(); }
+    @FXML private void onFilterFavorites() { favoritesOnly = true;  tabFav.setSelected(true); renderDirectory(); }
+
+    /** Star toggle: persists through ContactDAO, mutates the shared Contact, re-renders every view. */
+    private void toggleFavorite(Contact c) {
+        boolean next = !c.isFavorite();
+        try {
+            contactDAO.setFavorite(c.getId(), next);
+            c.setFavorite(next);
+        } catch (RuntimeException ex) {
+            error("Could not update favorite", ex.getMessage());
+            return;
+        }
+        refreshAll();
     }
 
     /**
-     * Shared Add/Edit dialog, now loaded from contact-form.fxml via
-     * ContactFormController so it can host the "connect to existing
-     * contacts" picker. Pass null to add a new contact, or an existing
-     * Contact to edit it (and its connections) in place.
+     * Shared Add/Edit dialog (ContactView.fxml + ContactFormController, which also hosts the
+     * "connect to existing contacts" picker). Pass null to add, or a Contact to edit in place.
      */
-    private void openContactDialog(Contact existing) {
+    // ═════════════════════════════════════════════════════════════════
+// ADD / EDIT CONTACT PAGE (was ContactFormController + ContactView.fxml)
+// Saving reuses the same DAO calls as before: addContact / updateContact /
+// setFavorite / applyConnectionSelection, then reloadAllFromDatabase().
+// ═════════════════════════════════════════════════════════════════
+    private void setupContactForm() {
+        formCandidates = new FilteredList<>(formCandidateData, c -> true);
+        contactListView.setItems(formCandidates);
+        contactListView.setCellFactory(lv -> new ConnectionCheckCell());
+
+        connSearchField.textProperty().addListener((o, a, b) -> {
+            String q = b == null ? "" : b.trim().toLowerCase();
+            formCandidates.setPredicate(c -> q.isEmpty() || containsIgnoreCase(c.getName(), q));
+        });
+
+        // round photo
+        photoView.setClip(new Circle(36, 36, 36));
+
+        nameField.textProperty().addListener((o, a, b) -> {
+            hideFieldError(nameError);
+            updatePhotoDisplay();
+            updateFormPreview();
+        });
+        phoneField.textProperty().addListener((o, a, b) -> hideFieldError(phoneError));
+        emailField.textProperty().addListener((o, a, b) -> hideFieldError(emailError));
+
+        for (Label l : List.of(nameError, phoneError, emailError, photoError)) show(l, false);
+    }
+
+    /** Pass null to add a new contact, or an existing Contact to edit it. */
+    private void openContactForm(Contact existing) {
         boolean editing = existing != null;
+        formContact = existing;
 
+        // connections: every other contact is a candidate, never the contact itself
+        formPreviousIds = editing
+                ? new HashSet<>(connectionDAO.getDirectConnections(existing.getId()))
+                : Collections.emptySet();
+        formSelectedIds.clear();
+        formSelectedIds.addAll(formPreviousIds);
+        formCandidateData.setAll(allContactsData.stream()
+                .filter(c -> !editing || c.getId() != existing.getId())
+                .collect(Collectors.toList()));
+        connSearchField.clear();
+        contactListView.refresh();
+
+        // fields
+        nameField.setText(editing ? nullToEmpty(existing.getName()) : "");
+        phoneField.setText(editing ? nullToEmpty(existing.getPhone()) : "");
+        emailField.setText(editing ? nullToEmpty(existing.getEmail()) : "");
+        favoriteToggle.setSelected(editing && existing.isFavorite());
+        for (Label l : List.of(nameError, phoneError, emailError, photoError)) hideFieldError(l);
+
+        // photo (preview only for now: Contact has no photo field)
+        formPhoto = null;
+        photoView.setImage(null);
+        photoHint.setText("JPG or PNG, up to 2 MB");
+        updatePhotoDisplay();
+
+        // titles / buttons
+        titleLabel.setText(editing ? "Edit contact" : "Add contact");
+        subtitleLabel.setText(editing
+                ? "Update the details and connections for " + existing.getName() + "."
+                : "Add a person and connect them to your network.");
+        saveButton.setText(editing ? "Save changes" : "Add contact");
+        footerNoteLabel.setText(REQUIRE_PHONE ? "Name and phone number are required." : "Name is required.");
+
+        // side cards
+        show(addSideCard, !editing);
+        show(editSideCard, editing);
+        if (editing) {
+            sideAvatarInitials.setText(initialsOf(existing.getName()));
+            sideAvatarView.setVisible(false);
+            sideNameLabel.setText(existing.getName());
+            sidePhoneLabel.setText(dash(existing.getPhone()));
+            show(favoriteTagBox, existing.isFavorite());
+            addedOnLabel.setText(addedText(existing));
+        }
+
+        updateFormPreview();
+        showPage(formPage);
+        nameField.requestFocus();
+    }
+
+    @FXML
+    private void onCancelContact() {
+        showPage(contactsPage);
+    }
+
+    @FXML
+    private void onSaveContact() {
+        String name = trimmed(nameField), phone = trimmed(phoneField), email = trimmed(emailField);
+
+        boolean ok = true;
+        if (name.isEmpty()) { fieldError(nameError, "Name is required."); ok = false; }
+        if (phone.isEmpty()) {
+            if (REQUIRE_PHONE) { fieldError(phoneError, "Phone number is required."); ok = false; }
+        } else if (!phone.matches("[0-9+()\\-\\s]{4,20}")) {
+            fieldError(phoneError, "Enter a valid phone number."); ok = false;
+        }
+        if (!email.isEmpty() && !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            fieldError(emailError, "Enter a valid email address."); ok = false;
+        }
+        if (!ok) return;
+
+        boolean wantFavorite = favoriteToggle.isSelected();
         try {
-            javafx.fxml.FXMLLoader loader = new javafx.fxml.FXMLLoader(
-                    getClass().getResource("/com/connectsphere/views/ContactView.fxml"));
-            javafx.scene.Parent root = loader.load();
-            ContactFormController formController = loader.getController();
-
-            javafx.stage.Stage dialogStage = new javafx.stage.Stage();
-            dialogStage.initModality(javafx.stage.Modality.APPLICATION_MODAL);
-            dialogStage.setTitle(editing ? "Edit Contact" : "Add Contact");
-            dialogStage.setResizable(false);
-            formController.setDialogStage(dialogStage);
-
-            // Every other contact is a candidate connection — never offer
-            // to connect a contact to themselves.
-            List<Contact> candidates = allContactsData.stream()
-                    .filter(c -> !editing || c.getId() != existing.getId())
-                    .collect(java.util.stream.Collectors.toList());
-
-            Set<Integer> existingConnectionIds = editing
-                    ? new HashSet<>(connectionDAO.getDirectConnections(existing.getId()))
-                    : Collections.emptySet();
-
-            if (editing) {
-                formController.initForEdit(existing, candidates, existingConnectionIds);
-            } else {
-                formController.initForAdd(candidates);
-            }
-
-            dialogStage.setScene(new javafx.scene.Scene(root));
-            dialogStage.showAndWait();
-
-            if (!formController.isSaved()) return;
-
-            String name = formController.getName();
-            String phone = formController.getPhone();
-            String email = formController.getEmail();
-            Set<Integer> selectedIds = formController.getSelectedConnectionIds();
-
             int contactId;
-            if (editing) {
-                existing.setName(name);
-                existing.setPhone(phone);
-                existing.setEmail(email);
-                contactDAO.updateContact(existing);
-                contactId = existing.getId();
+            if (formContact != null) {
+                formContact.setName(name);
+                formContact.setPhone(phone);
+                formContact.setEmail(email);
+                contactDAO.updateContact(formContact);
+                if (formContact.isFavorite() != wantFavorite) {
+                    contactDAO.setFavorite(formContact.getId(), wantFavorite);
+                    formContact.setFavorite(wantFavorite);
+                }
+                contactId = formContact.getId();
             } else {
                 Contact saved = contactDAO.addContact(new Contact(name, phone, email));
                 contactId = saved.getId();
+                if (wantFavorite) contactDAO.setFavorite(contactId, true);
             }
 
-            applyConnectionSelection(contactId, existingConnectionIds, selectedIds);
-
-            reloadAllContactsFromDatabase();
-            refreshRecentSection();
-            refreshDatabaseStats();
-
-        } catch (java.io.IOException e) {
-            showErrorAlert("Could not open contact form", e.getMessage());
+            applyConnectionSelection(contactId, formPreviousIds, new HashSet<>(formSelectedIds));
+            selectedId = contactId;
+            reloadAllFromDatabase();
+            showPage(contactsPage);
         } catch (RuntimeException e) {
-            showErrorAlert("Could not save contact", e.getMessage());
+            error("Could not save contact", e.getMessage());
         }
     }
 
-    /**
-     * Reconciles the connections picked in the dialog against what was
-     * already there: adds newly checked contacts, removes unchecked ones
-     * that used to be connected. No-op pairs (never touched) are skipped.
-     */
+    @FXML
+    private void onUploadPhoto() {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Choose a photo");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images (*.png, *.jpg, *.jpeg)", "*.png", "*.jpg", "*.jpeg"));
+        File f = fc.showOpenDialog(root.getScene().getWindow());
+        if (f == null) return;
+        if (f.length() > 2L * 1024 * 1024) { fieldError(photoError, "Photo must be 2 MB or smaller."); return; }
+
+        Image img = new Image(f.toURI().toString(), 144, 144, false, true);
+        if (img.isError()) { fieldError(photoError, "Could not read that image."); return; }
+
+        hideFieldError(photoError);
+        formPhoto = img;
+        photoView.setImage(img);
+        updatePhotoDisplay();
+    }
+
+    /** Photo circle: uploaded image > initials (once a name is typed) > person icon. */
+    private void updatePhotoDisplay() {
+        String name = nameField.getText() == null ? "" : nameField.getText().trim();
+        boolean hasImage = formPhoto != null;
+        photoView.setVisible(hasImage);
+        photoInitials.setVisible(!hasImage && !name.isEmpty());
+        photoPlaceholder.setVisible(!hasImage && name.isEmpty());
+        photoInitials.setText(initialsOf(name));
+    }
+
+    /** Re-renders the counters, the add-mode summary and the side "connection preview" card. */
+    private void updateFormPreview() {
+        int n = formSelectedIds.size();
+        selectedCountLabel.setText(n + " selected");
+
+        String typed = trimmed(nameField);
+        String who = typed.isEmpty() ? "This contact" : typed;
+
+        // contacts reachable through the ticked people (2 hops), excluding self and the ticked ones
+        Set<Integer> indirect = new LinkedHashSet<>();
+        for (int id : formSelectedIds)
+            for (int m : links.getOrDefault(id, Collections.emptySet()))
+                if (!formSelectedIds.contains(m) && (formContact == null || m != formContact.getId()))
+                    indirect.add(m);
+
+        summaryLabel.setText(n == 0
+                ? "No connections selected yet."
+                : plural(n, "direct connection") + " · " + plural(indirect.size(), "indirect connection"));
+
+        pathTitleLabel.setText("Connection preview");
+        pathDescriptionLabel.setText(n == 0
+                ? "Select people on the left to see how " + who + " will fit into your network."
+                : who + " will be directly connected to " + plural(n, "contact")
+                  + (indirect.isEmpty() ? "." : " and can reach " + plural(indirect.size(), "more") + " through them."));
+        pathFootnoteLabel.setText("Indirect connections are found automatically through shared contacts.");
+
+        show(indirectNoteLabel, !indirect.isEmpty());
+        indirectNoteLabel.setText("Selecting these people also gives " + who + " "
+                + plural(indirect.size(), "indirect connection") + ".");
+
+        previewBox.getChildren().clear();
+        Contact me = new Contact(typed.isEmpty() ? "New contact" : typed, "", "");
+        previewBox.getChildren().add(previewRow(me, "This contact", true));
+        int shown = 0;
+        for (int id : formSelectedIds) {
+            Contact c = contactsById.get(id);
+            if (c == null) continue;
+            if (shown++ == 4) break;
+            previewBox.getChildren().add(previewRow(c, "Direct connection", false));
+        }
+        if (n > 4) previewBox.getChildren().add(styled("+ " + (n - 4) + " more", "muted-11"));
+    }
+
+    private Node previewRow(Contact c, String sub, boolean filled) {
+        VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(sub, "row-phone"));
+        HBox row = new HBox(10, avatar(c, 32, 12, filled), text);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    private void fieldError(Label l, String msg) { l.setText(msg); show(l, true); }
+    private void hideFieldError(Label l)         { show(l, false); }
+    private String trimmed(TextField f)          { return f.getText() == null ? "" : f.getText().trim(); }
+    private String nullToEmpty(String s)         { return s == null ? "" : s; }
+
+    /** One row in the connections picker: checkbox + avatar + name. Click anywhere on the row to toggle. */
+    private class ConnectionCheckCell extends ListCell<Contact> {
+        private final CheckBox checkBox = new CheckBox();
+        private final Label avatarLabel = new Label();
+        private final Label nameLabel = new Label();
+        private final HBox row = new HBox(10);
+
+        ConnectionCheckCell() {
+            avatarLabel.getStyleClass().add("connection-avatar-label");
+            nameLabel.getStyleClass().add("connection-name");
+            StackPane avatarStack = new StackPane(avatarLabel);
+            avatarStack.getStyleClass().add("connection-avatar");
+
+            row.getChildren().setAll(checkBox, avatarStack, nameLabel);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.getStyleClass().add("connection-row");
+            row.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(nameLabel, Priority.ALWAYS);
+
+            // the row handles every click, so the checkbox never double-toggles
+            checkBox.setMouseTransparent(true);
+            row.setOnMouseClicked(e -> {
+                Contact c = getItem();
+                if (c == null) return;
+                checkBox.setSelected(!checkBox.isSelected());
+                if (checkBox.isSelected()) formSelectedIds.add(c.getId());
+                else formSelectedIds.remove(c.getId());
+                updateFormPreview();
+            });
+        }
+
+        @Override
+        protected void updateItem(Contact c, boolean empty) {
+            super.updateItem(c, empty);
+            if (empty || c == null) { setGraphic(null); return; }
+            nameLabel.setText(c.getName());
+            avatarLabel.setText(initialsOf(c.getName()));
+            checkBox.setSelected(formSelectedIds.contains(c.getId()));
+            setGraphic(row);
+        }
+    }
+
+    /** Adds newly ticked connections and removes unticked ones that used to exist; untouched pairs are skipped. */
     private void applyConnectionSelection(int contactId, Set<Integer> previouslyConnected, Set<Integer> nowSelected) {
-        for (int otherId : nowSelected) {
-            if (!previouslyConnected.contains(otherId)) {
-                connectionDAO.addConnection(contactId, otherId);
-            }
-        }
-        for (int otherId : previouslyConnected) {
-            if (!nowSelected.contains(otherId)) {
-                connectionDAO.removeConnection(contactId, otherId);
-            }
-        }
+        for (int otherId : nowSelected)
+            if (!previouslyConnected.contains(otherId)) connectionDAO.addConnection(contactId, otherId);
+        for (int otherId : previouslyConnected)
+            if (!nowSelected.contains(otherId)) connectionDAO.removeConnection(contactId, otherId);
     }
-
-
 
     private void confirmAndDeleteContact(Contact contact) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                "Delete " + contact.getName() + "? This also removes any connections involving them.",
-                ButtonType.CANCEL, ButtonType.OK);
-        confirm.setHeaderText(null);
-        confirm.setTitle("Delete Contact");
+        if (!confirm("Delete Contact",
+                "Delete " + contact.getName() + "? This also removes any connections involving them.", "Delete"))
+            return;
+        try {
+            contactDAO.deleteContact(contact.getId());
+            if (selectedId == contact.getId()) selectedId = -1;
+            reloadAllFromDatabase();
+        } catch (RuntimeException e) {
+            error("Could not delete contact", e.getMessage());
+        }
+    }
 
-        confirm.showAndWait().ifPresent(choice -> {
-            if (choice != ButtonType.OK) return;
-            try {
-                contactDAO.deleteContact(contact.getId());
-                reloadAllContactsFromDatabase();
-                refreshRecentSection();
-                refreshDatabaseStats();
-            } catch (RuntimeException e) {
-                showErrorAlert("Could not delete contact", e.getMessage());
-            }
+    /** While a search is active only the results show; otherwise the Settings switches decide. */
+    private void applyListVisibility() {
+        boolean searching = !query.isEmpty();
+        boolean showFav = favToggle.isSelected() && !searching;
+        boolean showRecent = recentToggle.isSelected() && !searching;
+        show(favoritesSection, showFav);
+        show(recentSection, showRecent);
+        show(listsSection, showFav || showRecent);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // CONTACTS PAGE — rendering
+    // ═════════════════════════════════════════════════════════════════
+    private void renderFavorites() {
+        favoritesBox.getChildren().clear();
+        List<Contact> favs = allContactsData.stream()
+                .filter(Contact::isFavorite)
+                .sorted(byName(true))
+                .collect(Collectors.toList());
+        favoritesCount.setText(plural(favs.size(), "contact"));
+
+        if (favs.isEmpty()) {
+            favoritesBox.getChildren().add(styled("No favorites yet. Star a contact to pin them here.", "empty-text"));
+            return;
+        }
+        for (Contact c : favs) favoritesBox.getChildren().add(buildFavoriteCard(c));
+    }
+
+    private Node buildFavoriteCard(Contact c) {
+        StackPane star = icon("star-fill", 18, "ic-blue");
+        star.setMouseTransparent(false);
+        star.setCursor(Cursor.HAND);
+        star.setOnMouseClicked(e -> { e.consume(); toggleFavorite(c); });
+
+        HBox top = new HBox(avatar(c, 48, 16, true), spacer(), star);
+        top.setAlignment(Pos.TOP_LEFT);
+
+        HBox phone = iconLabel("phone", 12, "ic-muted", dash(c.getPhone()), "fav-meta");
+        boolean noEmail = c.getEmail() == null || c.getEmail().isBlank();
+        HBox email = noEmail
+                ? iconLabel("envelope-simple", 12, "ic-soft", "No email added", "fav-meta-muted")
+                : iconLabel("envelope-simple", 12, "ic-muted", c.getEmail(), "fav-meta");
+        phone.setAlignment(Pos.CENTER);
+        email.setAlignment(Pos.CENTER);
+        VBox info = new VBox(4, styled(c.getName(), "fav-name"), phone, email);
+        info.setAlignment(Pos.TOP_CENTER);
+
+        VBox card = new VBox(8, top, info);
+        card.getStyleClass().add("fav-card");
+        card.setPadding(new Insets(16, 18, 16, 18));
+        card.setPrefWidth(220);
+        card.setMinWidth(185);
+        wireRow(card, c);
+        return card;
+    }
+
+    /** Newest first (highest id), same rule as the old controller. */
+    private void renderRecent() {
+        recentList.getChildren().clear();
+        List<Contact> recent = allContactsData.stream()
+                .sorted(Comparator.comparing(Contact::getId).reversed())
+                .limit(5)
+                .collect(Collectors.toList());
+        recentCount.setText(plural(recent.size(), "contact"));
+
+        for (int i = 0; i < recent.size(); i++) {
+            Contact c = recent.get(i);
+            VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(subtitle(c), "row-phone"));
+            HBox date = iconLabel("calendar-blank", 12, "ic-soft", addedText(c), "row-date");
+
+            HBox row = new HBox(14, avatar(c, 32, 12, c.isFavorite()), text, spacer(), date,
+                    icon("caret-right", 14, c.isFavorite() ? "ic-blue" : "ic-nav"));
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(10, 18, 10, 18));
+            row.getStyleClass().add("recent-row");
+            if (i == recent.size() - 1) row.getStyleClass().add("last");
+            wireRow(row, c);
+            recentList.getChildren().add(row);
+        }
+    }
+
+    private void renderDirectory() {
+        directoryList.getChildren().clear();
+
+        List<Contact> view = allContactsData.stream()
+                .filter(c -> !favoritesOnly || c.isFavorite())
+                .filter(c -> query.isEmpty()
+                        || containsIgnoreCase(c.getName(), query)
+                        || containsIgnoreCase(c.getPhone(), query)
+                        || containsIgnoreCase(c.getEmail(), query))
+                .sorted(byName(sortAscending))
+                .collect(Collectors.toList());
+
+        for (Contact c : view) {
+            VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(subtitle(c), "row-phone"));
+            if (c.isFavorite()) text.getChildren().add(iconLabel("star-fill", 10, "ic-blue", "Favorite", "dir-fav-tag"));
+
+            HBox identity = new HBox(10, avatar(c, 36, 13, c.isFavorite()), text);
+            identity.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(identity, Priority.ALWAYS);
+
+            Label added = styled(addedText(c), "footer-text");
+            added.setStyle("-fx-font-size: 11px;");
+            added.setPrefWidth(100); added.setMinWidth(100);
+
+            boolean isSel = c.getId() == selectedId;
+            HBox row = new HBox(identity, added, icon("caret-right", 16, isSel ? "ic-blue" : "ic-soft"));
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(0, 20, 0, 20));
+            row.setMinHeight(c.isFavorite() ? 62 : 52);
+            row.setPrefHeight(c.isFavorite() ? 62 : 52);
+            row.getStyleClass().add("dir-row");
+            if (isSel) row.getStyleClass().add("selected");
+            wireRow(row, c);
+            directoryList.getChildren().add(row);
+        }
+
+        footerCount.setText(!favoritesOnly && query.isEmpty()
+                ? "Showing all " + plural(view.size(), "contact")
+                : "Showing " + view.size() + " of " + allContactsData.size() + " contacts");
+    }
+
+    private void renderDetails() {
+        Contact sel = selected();
+        boolean has = sel != null;
+        detailContent.setVisible(has);
+        detailContent.setManaged(has);
+        if (!has) return;
+
+        detailAvatarHolder.getChildren().setAll(avatar(sel, 56, 20, sel.isFavorite()));
+        detailName.setText(sel.getName());
+        detailPhone.setText(subtitle(sel));
+        detailAdded.setText(addedText(sel));
+        fillIconHolder(detailFavoriteIcon, sel.isFavorite() ? "star-fill" : "star", 12);
+        detailFavoriteText.setText(sel.isFavorite() ? "Favorite contact" : "Add to favorites");
+
+        // direct (1 hop)
+        Set<Integer> direct = links.getOrDefault(sel.getId(), Collections.emptySet());
+        directList.getChildren().clear();
+        directCount.setText(plural(direct.size(), "contact"));
+        if (direct.isEmpty()) directList.getChildren().add(styled("No direct connections yet.", "empty-text"));
+        for (int id : direct) directList.getChildren().add(connectionItem(contactsById.get(id), "Directly connected"));
+
+        // indirect (2 hops) remembering which direct contact we came through
+        Map<Integer, Integer> via = new LinkedHashMap<>();
+        for (int n : direct)
+            for (int m : links.getOrDefault(n, Collections.emptySet()))
+                if (m != sel.getId() && !direct.contains(m)) via.putIfAbsent(m, n);
+        indirectList.getChildren().clear();
+        indirectCount.setText(plural(via.size(), "contact"));
+        if (via.isEmpty()) indirectList.getChildren().add(styled("No indirect connections yet.", "empty-text"));
+        via.forEach((m, n) -> indirectList.getChildren().add(
+                connectionItem(contactsById.get(m), "Via " + contactsById.get(n).getName())));
+    }
+
+    private Node connectionItem(Contact c, String sub) {
+        VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(subtitle(c), "conn-phone"), styled(sub, "conn-via"));
+        HBox item = new HBox(10, avatar(c, 34, 13, false), text, spacer(), icon("caret-right", 14, "ic-muted"));
+        item.setAlignment(Pos.CENTER_LEFT);
+        item.setPadding(new Insets(8, 12, 8, 12));
+        item.getStyleClass().add("conn-item");
+        item.setOnMouseClicked(e -> select(c));
+        return item;
+    }
+
+    private void select(Contact c) {
+        selectedId = c.getId();
+        renderDirectory();
+        renderDetails();
+    }
+
+    /** Click = select, double-click = edit, right-click = Edit / Delete menu. */
+    private void wireRow(Node row, Contact c) {
+        ContextMenu menu = new ContextMenu();
+        MenuItem edit = new MenuItem("Edit Contact");
+        edit.setOnAction(e -> openContactForm(null));
+        MenuItem delete = new MenuItem("Delete Contact");
+        delete.setOnAction(e -> confirmAndDeleteContact(c));
+        menu.getItems().addAll(edit, delete);
+
+        row.setOnContextMenuRequested(e -> { menu.show(row, e.getScreenX(), e.getScreenY()); e.consume(); });
+        row.setOnMouseClicked(e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            if (e.getClickCount() == 2) openContactForm(null);
+            else select(c);
         });
     }
 
-    @FXML
-    private void onViewAllFavorites() {
-        refreshFavoritesSection();
-    }
+    // ═════════════════════════════════════════════════════════════════
+    // CONNECTION FINDER
+    // ═════════════════════════════════════════════════════════════════
+    @FXML private void onFindConnection() { renderFinder(); }
 
-    @FXML
-    private void onViewAllRecent() {
-        refreshRecentSection();
-    }
+    @FXML private void onZoomIn()    { setZoom(zoom + 0.1); }
+    @FXML private void onZoomOut()   { setZoom(zoom - 0.1); }
+    @FXML private void onZoomReset() { setZoom(1.0); }
 
-    /** Shared handler for every A-Z quick-jump button — jumps to that letter's header row. */
-    @FXML
-    private void onAlphaJump(ActionEvent event) {
-        String letter = ((Button) event.getSource()).getText();
-        ObservableList<Object> visible = allContactsListView.getItems();
-
-        for (int i = 0; i < visible.size(); i++) {
-            if (visible.get(i) instanceof AlphaHeader header && header.letter.equalsIgnoreCase(letter)) {
-                allContactsListView.scrollTo(i);
-                return;
-            }
-        }
-        // No contact starting with that letter — nothing to scroll to.
+    private void setZoom(double z) {
+        zoom = Math.max(0.5, Math.min(2.0, z));
+        zoomLayer.setScaleX(zoom);
+        zoomLayer.setScaleY(zoom);
     }
 
     /**
-     * Filters the shared in-memory contact cache (allContactsData) — not a
-     * fresh DB query — so the All Contacts/search list keeps showing the
-     * exact same Contact objects as Recently Added and Favorites. While a
-     * search is active, hides the Favorite Contacts and Recently Added
-     * sections so only the search results are visible; clearing the field
-     * restores both (subject to their own Settings show/hide toggles).
+     * Old algorithm, unchanged: build the graph fresh from the connections table on every search
+     * (so it always reflects the latest data) and run BFSPathFinder on it.
      */
-    private void filterContacts(String query) {
-        boolean searching = query != null && !query.trim().isEmpty();
-        allContactsSectionLabel.setText(searching ? "Search Results" : "All Contacts");
-
-        favoritesSectionBox.setVisible(!searching && showFavoritesToggle.isSelected());
-        favoritesSectionBox.setManaged(!searching && showFavoritesToggle.isSelected());
-        recentSectionBox.setVisible(!searching && showRecentToggle.isSelected());
-        recentSectionBox.setManaged(!searching && showRecentToggle.isSelected());
-
-        List<Contact> results;
-        if (searching) {
-            String q = query.trim().toLowerCase();
-            results = allContactsData.stream()
-                    .filter(c -> containsIgnoreCase(c.getName(), q)
-                            || containsIgnoreCase(c.getPhone(), q)
-                            || containsIgnoreCase(c.getEmail(), q))
-                    .collect(Collectors.toList());
-        } else {
-            results = new ArrayList<>(allContactsData);
-        }
-        allContactsListView.setItems(buildGroupedItems(results));
-    }
-
-    private boolean containsIgnoreCase(String field, String query) {
-        return field != null && field.toLowerCase().contains(query);
-    }
-
-    // ═════════════════════════════════════════════════════════════════
-    // CONNECTION FINDER FUNCTIONS
-    // ═════════════════════════════════════════════════════════════════
-
-    private void populateFinderComboItems() {
-        Contact previousStart = startContactCombo.getValue();
-        Contact previousEnd = endContactCombo.getValue();
-
-        startContactCombo.setItems(FXCollections.observableArrayList(allContactsData));
-        endContactCombo.setItems(FXCollections.observableArrayList(allContactsData));
-
-        // Re-select the same contacts by id if they still exist, so the
-        // user's picks survive a background refresh.
-        restoreSelection(startContactCombo, previousStart);
-        restoreSelection(endContactCombo, previousEnd);
-    }
-
-    private void restoreSelection(ComboBox<Contact> combo, Contact previous) {
-        if (previous == null) return;
-        for (Contact c : combo.getItems()) {
-            if (c.getId() == previous.getId()) {
-                combo.getSelectionModel().select(c);
-                return;
-            }
-        }
-    }
-
-    @FXML
-    private void onFindConnection() {
-        Contact start = startContactCombo.getValue();
-        Contact end = endContactCombo.getValue();
-        if (start == null || end == null) return;
-
-        // Build the graph fresh from the database every search, so it
-        // always reflects the latest connections.
+    private List<Contact> findShortestPath(Contact start, Contact end) {
         ContactGraph graph = new ContactGraph(connectionDAO.getAllConnections());
         BFSPathFinder finder = new BFSPathFinder(graph);
         BFSPathFinder.PathResult result = finder.findShortestPath(start.getId(), end.getId());
+        if (!result.pathExists()) return null;
 
-        if (result.pathExists()) {
-            List<Contact> pathContacts = new ArrayList<>();
-            for (int id : result.getPath()) {
-                Contact c = contactsById.get(id);
-                if (c == null) c = contactDAO.getContactById(id); // fallback, shouldn't normally hit
-                pathContacts.add(c);
+        List<Contact> path = new ArrayList<>();
+        for (int id : result.getPath()) {
+            Contact c = contactsById.get(id);
+            if (c == null) c = contactDAO.getContactById(id); // fallback, shouldn't normally hit
+            path.add(c);
+        }
+        return path;
+    }
+
+    private void renderFinder() {
+        Contact a = fromCombo.getValue(), b = toCombo.getValue();
+        List<Contact> path = (a != null && b != null && a.getId() != b.getId()) ? findShortestPath(a, b) : null;
+        lastA = a; lastB = b; lastPath = path;
+
+        finderSearchHint.setText("Search across all " + allContactsData.size() + " contacts");
+        networkSubtitle.setText(plural(allContactsData.size(), "contact") + " · " + plural(connectionCount(), "direct connection"));
+
+        renderResultCard(a, b, path);
+        renderGraph();
+    }
+
+    private void renderResultCard(Contact a, Contact b, List<Contact> path) {
+        boolean found = path != null;
+        show(statsBox, found);
+        show(pathHeader, found);
+        show(pathList, found);
+        show(pathNote, found && path.size() > 2);
+        show(pathPill, found);
+        pathList.getChildren().clear();
+
+        if (a == null || b == null) {
+            resultStatus.setText("SELECT CONTACTS");
+            resultTitle.setText("Choose two contacts");
+            resultDesc.setText("Pick a starting and a destination contact to find the shortest route.");
+            pathSummary.setText("—");
+            return;
+        }
+        if (a.getId() == b.getId()) {
+            resultStatus.setText("SAME CONTACT");
+            resultTitle.setText("Pick two different people");
+            resultDesc.setText("The starting and destination contacts need to be different.");
+            pathSummary.setText("—");
+            return;
+        }
+        if (!found) {
+            resultStatus.setText("NO CONNECTION");
+            resultTitle.setText("No connection found");
+            resultDesc.setText("There is no connection between " + a.getName() + " and " + b.getName() + ".");
+            pathSummary.setText("—");
+            return;
+        }
+
+        int dist = path.size() - 1;
+        List<String> mids = path.subList(1, path.size() - 1).stream().map(Contact::getName).collect(Collectors.toList());
+
+        resultStatus.setText("CONNECTION FOUND");
+        resultTitle.setText(dist == 1 ? "Directly connected" : "Connected through " + joinNames(mids));
+        resultDesc.setText(dist == 1
+                ? a.getName() + " and " + b.getName() + " are directly connected."
+                : a.getName() + " and " + b.getName() + " are " + dist + " connections apart.");
+        statDistance.setText(String.valueOf(dist));
+        statDistanceLabel.setText(dist == 1 ? "Connection" : "Connections");
+        statMutual.setText(String.valueOf(mids.size()));
+        statMutualLabel.setText(mids.size() == 1 ? "Mutual contact" : "Mutual contacts");
+        pathNoteLabel.setText("No direct connection between these contacts.");
+        pathSummary.setText(path.stream().map(Contact::getName).collect(Collectors.joining(" → ")));
+
+        for (int i = 0; i < path.size(); i++) {
+            Contact c = path.get(i);
+            boolean end = i == 0 || i == path.size() - 1;
+            String sub = i == 0 ? "Starting contact" : (end ? "Destination contact" : "Mutual contact");
+
+            HBox node = new HBox(12, avatar(c, 36, 14, end),
+                    new VBox(4, styled(c.getName(), "path-node-name"), styled(sub, "path-node-sub")));
+            node.setAlignment(Pos.CENTER_LEFT);
+            pathList.getChildren().add(node);
+
+            if (i < path.size() - 1) {
+                Region line = new Region();
+                line.getStyleClass().add("path-connector-line");
+                line.setMinSize(2, 24); line.setPrefSize(2, 24); line.setMaxSize(2, 24);
+                HBox connector = new HBox(29, line, styled("Direct connection", "path-connector-text"));
+                connector.setAlignment(Pos.CENTER_LEFT);
+                connector.setPadding(new Insets(0, 0, 0, 17));
+                connector.setMinHeight(32); connector.setPrefHeight(32);
+                pathList.getChildren().add(connector);
             }
-            showFinderFound(pathContacts, result.getDistance());
+        }
+    }
+
+    private void onGraphResized() {
+        double w = graphPane.getWidth(), h = graphPane.getHeight();
+        gridCanvas.setWidth(w);
+        gridCanvas.setHeight(h);
+        GraphicsContext gc = gridCanvas.getGraphicsContext2D();
+        gc.clearRect(0, 0, w, h);
+        gc.setFill(Color.web("#E2E8F1"));
+        for (double x = 28; x < w; x += 48)
+            for (double y = 25; y < h; y += 48) gc.fillOval(x, y, 2, 2);
+        renderGraph();
+    }
+
+    /**
+     * Layout: with a path, path nodes zig-zag left→right and the other contacts sit on a lower row;
+     * otherwise every contact is placed on a circle. Edges come from the connections cache.
+     */
+    private void renderGraph() {
+        double w = graphPane.getWidth(), h = graphPane.getHeight();
+        zoomLayer.getChildren().clear();
+        if (w <= 0 || h <= 0 || allContactsData.isEmpty()) return;
+        zoomLayer.setPrefSize(w, h);
+        zoomLayer.resize(w, h);
+
+        boolean pathMode = lastPath != null && lastPath.size() >= 2;
+        Map<Integer, double[]> pos = new HashMap<>();   // id -> {cx, cy, diameter}
+        Set<Integer> pathIds = new HashSet<>();
+
+        if (pathMode) {
+            int n = lastPath.size();
+            for (int i = 0; i < n; i++) {
+                Contact c = lastPath.get(i);
+                pathIds.add(c.getId());
+                double x = w * (0.16 + 0.68 * (i / (double) (n - 1)));
+                boolean end = i == 0 || i == n - 1;
+                double y = (end || n == 2) ? h * 0.50 : h * 0.28;
+                pos.put(c.getId(), new double[]{x, y, 76});
+            }
+            List<Contact> others = allContactsData.stream().filter(c -> !pathIds.contains(c.getId())).collect(Collectors.toList());
+            for (int i = 0; i < others.size(); i++)
+                pos.put(others.get(i).getId(), new double[]{w * (i + 1) / (others.size() + 1), h * 0.74, 56});
         } else {
-            showFinderNotFound(start.getName(), end.getName());
+            int n = allContactsData.size();
+            double d = n > 4 ? 56 : 76;
+            double r = Math.min(w, h) * 0.28;
+            for (int i = 0; i < n; i++) {
+                double ang = -Math.PI / 2 + 2 * Math.PI * i / n;
+                double cx = n == 1 ? w / 2 : w / 2 + r * 1.6 * Math.cos(ang);
+                double cy = n == 1 ? h * 0.45 : h * 0.46 + r * Math.sin(ang);
+                pos.put(allContactsData.get(i).getId(), new double[]{cx, cy, d});
+            }
+        }
+
+        Set<String> pathEdges = new HashSet<>();
+        if (pathMode)
+            for (int i = 0; i < lastPath.size() - 1; i++)
+                pathEdges.add(edgeKey(lastPath.get(i).getId(), lastPath.get(i + 1).getId()));
+
+        // edges first (under the nodes)
+        List<Node> labels = new ArrayList<>();
+        for (Connection cn : connectionsCache) {
+            double[] p = pos.get(cn.getContactId1()), q = pos.get(cn.getContactId2());
+            if (p == null || q == null) continue;
+            boolean hot = pathEdges.contains(edgeKey(cn.getContactId1(), cn.getContactId2()));
+            Line line = new Line(p[0], p[1], q[0], q[1]);
+            line.setStroke(Color.web(hot ? "#2563EB" : "#B9D0FB"));
+            line.setStrokeWidth(hot ? 3 : 2);
+            line.setMouseTransparent(true);
+            zoomLayer.getChildren().add(line);
+            if (hot) {
+                Label pill = styled("Direct", "edge-label");
+                pill.setLayoutX((p[0] + q[0]) / 2 - 22);
+                pill.setLayoutY((p[1] + q[1]) / 2 - 11);
+                pill.setMouseTransparent(true);
+                labels.add(pill);
+            }
+        }
+        zoomLayer.getChildren().addAll(labels);
+
+        for (Contact c : allContactsData) {
+            double[] p = pos.get(c.getId());
+            boolean end = pathMode && (c.getId() == lastPath.get(0).getId() || c.getId() == lastPath.get(lastPath.size() - 1).getId());
+            boolean mid = pathMode && pathIds.contains(c.getId()) && !end;
+            boolean pick = !pathMode && (idOf(lastA) == c.getId() || idOf(lastB) == c.getId());
+            String ring = (end || pick) ? "endpoint" : (mid ? "mid" : "other");
+            String sub;
+            if (pathMode) sub = c.getId() == lastPath.get(0).getId() ? "Starting contact" : end ? "Destination contact" : mid ? "Mutual contact" : "Contact";
+            else sub = idOf(lastA) == c.getId() ? "Starting contact" : idOf(lastB) == c.getId() ? "Destination contact" : "Contact";
+            zoomLayer.getChildren().add(graphNode(c, p[0], p[1], p[2], ring, end || pick, sub));
+        }
+    }
+
+    private String edgeKey(int a, int b) { return Math.min(a, b) + "-" + Math.max(a, b); }
+
+    private Node graphNode(Contact c, double cx, double cy, double d, String ringClass, boolean filled, String sub) {
+        Label initial = new Label(initialsOf(c.getName()));
+        initial.getStyleClass().add(filled ? "node-initial-filled" : "node-initial-light");
+        initial.setStyle("-fx-font-size: " + Math.round(d * 0.316) + "px;");
+
+        StackPane core = new StackPane(initial);
+        core.getStyleClass().add(filled ? "node-core-filled" : "node-core-light");
+        double cd = d - 16;
+        core.setMinSize(cd, cd); core.setPrefSize(cd, cd); core.setMaxSize(cd, cd);
+
+        StackPane ring = new StackPane(core);
+        ring.getStyleClass().addAll("node-ring", ringClass);
+        ring.setMinSize(d, d); ring.setPrefSize(d, d); ring.setMaxSize(d, d);
+
+        VBox labels = new VBox(5, styled(c.getName(), "node-name"), styled(sub, "node-sub"));
+        labels.setAlignment(Pos.CENTER);
+
+        VBox box = new VBox(10, ring, labels);
+        box.setAlignment(Pos.TOP_CENTER);
+        box.setFillWidth(false);
+        box.setPrefWidth(140); box.setMinWidth(140); box.setMaxWidth(140);
+        box.setLayoutX(cx - 70);
+        box.setLayoutY(cy - d / 2);
+        box.setOnMouseClicked(e -> { fromCombo.setValue(c); renderFinder(); }); // click a node = start from them
+        return box;
+    }
+
+    private ListCell<Contact> contactCell(boolean buttonCell) {
+        return new ListCell<>() {
+            @Override protected void updateItem(Contact c, boolean empty) {
+                super.updateItem(c, empty);
+                setText(null);
+                if (empty || c == null) {
+                    setGraphic(buttonCell ? styled("Select a contact", "contact-combo-empty") : null);
+                    return;
+                }
+                HBox h = new HBox(10, avatar(c, 30, 14, false), styled(c.getName(), "contact-combo-name"));
+                h.setAlignment(Pos.CENTER_LEFT);
+                setGraphic(h);
+            }
+        };
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SETTINGS
+    // ═════════════════════════════════════════════════════════════════
+
+    /** Radio cards + both switches land here. */
+    @FXML
+    private void onSettingsChanged() {
+        displayFormat = fmtEmail.isSelected() ? DisplayFormat.EMAIL
+                : fmtBoth.isSelected() ? DisplayFormat.BOTH : DisplayFormat.PHONE;
+        favToggleLabel.setText(favToggle.isSelected() ? "On" : "Off");
+        recentToggleLabel.setText(recentToggle.isSelected() ? "On" : "Off");
+        applyListVisibility();
+        renderRecent();
+        renderDirectory();
+        renderDetails();
+    }
+
+    @FXML
+    private void onBackupData() {
+        FileChooser fc = backupChooser("Save backup");
+        fc.setInitialFileName("contact-network-backup.cnb");
+        File f = fc.showSaveDialog(root.getScene().getWindow());
+        if (f == null) return;
+        try {
+            Files.write(f.toPath(), buildBackup(), StandardCharsets.UTF_8);
+            info("Backup saved", "Saved " + plural(allContactsData.size(), "contact") + " and "
+                    + plural(connectionCount(), "connection") + " to:\n" + f.getAbsolutePath());
+        } catch (IOException e) {
+            error("Backup failed", e.getMessage());
         }
     }
 
     @FXML
-    private void onResetFinder() {
-        resetFinderResultState();
+    private void onRestoreData() {
+        File f = backupChooser("Choose a backup file").showOpenDialog(root.getScene().getWindow());
+        if (f == null) return;
+        if (!confirm("Restore data", "Restoring replaces all current contacts and connections with the backup. Continue?", "Restore"))
+            return;
+        try {
+            restoreFrom(Files.readAllLines(f.toPath(), StandardCharsets.UTF_8));
+            info("Restore complete", "Loaded " + plural(allContactsData.size(), "contact") + " and "
+                    + plural(connectionCount(), "connection") + ".");
+        } catch (Exception e) {
+            error("Restore failed", "Could not restore this file.\n" + e.getMessage());
+        }
     }
 
-    private void resetFinderResultState() {
-        showOnly(resultIdleBox, resultFoundBox, resultNotFoundBox);
-        networkHintLabel.setVisible(true);
-        networkHintLabel.setManaged(true);
-        pathNodesContainer.getChildren().clear();
-        distanceValueLabel.setText("—");
-        drawNetworkGraph(Collections.emptyList());
+    @FXML
+    private void onClearData() {
+        if (!confirm("Clear all data", "This permanently removes all contacts and connections and cannot be undone.", "Clear all data"))
+            return;
+        try {
+            contactDAO.deleteAllContacts(); // cascades to connections
+            selectedId = -1;
+            reloadAllFromDatabase();
+        } catch (RuntimeException e) {
+            error("Could not clear data", e.getMessage());
+        }
     }
 
-    private void showFinderFound(List<Contact> pathContacts, int distance) {
-        showOnly(resultFoundBox, resultIdleBox, resultNotFoundBox);
-        networkHintLabel.setVisible(false);
-        networkHintLabel.setManaged(false);
+    // backup file: one record per line, tab separated, text fields URL-encoded
+    //   C <id> <name> <phone> <email> <favorite>
+    //   L <idA> <idB>
+    private List<String> buildBackup() {
+        List<String> out = new ArrayList<>();
+        out.add(BACKUP_HEADER);
+        for (Contact c : allContactsData)
+            out.add(String.join("\t", "C", String.valueOf(c.getId()), enc(c.getName()), enc(c.getPhone()),
+                    enc(c.getEmail()), String.valueOf(c.isFavorite())));
+        for (Connection cn : connectionsCache)
+            out.add("L\t" + cn.getContactId1() + "\t" + cn.getContactId2());
+        return out;
+    }
 
-        pathNodesContainer.getChildren().clear();
+    /** Parses + validates the whole file first, so a bad file never leaves the DB half-wiped. */
+    private void restoreFrom(List<String> lines) {
+        if (lines.isEmpty() || !BACKUP_HEADER.equals(lines.get(0).trim()))
+            throw new IllegalArgumentException("Missing backup header.");
 
-        for (int i = 0; i < pathContacts.size(); i++) {
-            Contact c = pathContacts.get(i);
-            boolean isStart = (i == 0);
-            boolean isEnd = (i == pathContacts.size() - 1);
-            pathNodesContainer.getChildren().add(buildPathNodeRow(c, isStart, isEnd));
+        class Rec { int oldId; String name, phone, email; boolean fav; }
+        List<Rec> recs = new ArrayList<>();
+        Set<Integer> knownIds = new HashSet<>();
+        List<int[]> edges = new ArrayList<>();
 
-            if (i < pathContacts.size() - 1) {
-                Label connector = new Label("↓");
-                connector.getStyleClass().add("path-connector-arrow");
-                connector.setAlignment(Pos.CENTER);
-                connector.setMaxWidth(Double.MAX_VALUE);
-                pathNodesContainer.getChildren().add(connector);
+        for (String line : lines.subList(1, lines.size())) {
+            if (line.isBlank()) continue;
+            String[] t = line.split("\t", -1);
+            if (t[0].equals("C")) {
+                Rec r = new Rec();
+                r.oldId = Integer.parseInt(t[1]);
+                r.name = dec(t[2]); r.phone = dec(t[3]); r.email = dec(t[4]);
+                r.fav = Boolean.parseBoolean(t[5]);
+                recs.add(r);
+                knownIds.add(r.oldId);
+            } else if (t[0].equals("L")) {
+                edges.add(new int[]{Integer.parseInt(t[1]), Integer.parseInt(t[2])});
             }
         }
+        for (int[] e : edges)
+            if (!knownIds.contains(e[0]) || !knownIds.contains(e[1]))
+                throw new IllegalArgumentException("A connection refers to an unknown contact.");
 
-        distanceValueLabel.setText(String.valueOf(distance));
-        distanceUnitLabel.setText(distance == 1 ? "connection" : "connections");
-
-        List<Integer> pathIds = pathContacts.stream().map(Contact::getId).toList();
-        drawNetworkGraph(pathIds);
-    }
-
-    private HBox buildPathNodeRow(Contact contact, boolean isStart, boolean isEnd) {
-        Label avatar = new Label(initialsOf(contact.getName()));
-        avatar.getStyleClass().add("path-node-avatar");
-        avatar.setMinSize(32, 32);
-        avatar.setAlignment(Pos.CENTER);
-
-        Label nameLabel = new Label(contact.getName());
-        nameLabel.getStyleClass().add("path-node-name");
-
-        HBox row = new HBox(10, avatar, nameLabel);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.getStyleClass().add("path-node-row");
-        row.setPadding(new Insets(6, 8, 6, 8));
-
-        if (isStart || isEnd) {
-            Label badge = new Label(isStart ? "START" : "END");
-            badge.getStyleClass().add(isStart ? "path-node-badge-start" : "path-node-badge-end");
-            Region spacer = new Region();
-            HBox.setHgrow(spacer, Priority.ALWAYS);
-            row.getChildren().addAll(spacer, badge);
+        // apply: ids are reassigned by the DB, so map old id -> new id
+        contactDAO.deleteAllContacts();
+        Map<Integer, Integer> idMap = new HashMap<>();
+        for (Rec r : recs) {
+            Contact saved = contactDAO.addContact(new Contact(r.name, r.phone, r.email));
+            if (r.fav) contactDAO.setFavorite(saved.getId(), true);
+            idMap.put(r.oldId, saved.getId());
         }
-        return row;
+        for (int[] e : edges) connectionDAO.addConnection(idMap.get(e[0]), idMap.get(e[1]));
+
+        selectedId = -1;
+        reloadAllFromDatabase();
     }
+
+    private FileChooser backupChooser(String title) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle(title);
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Contact Network Backup (*.cnb)", "*.cnb"));
+        return fc;
+    }
+
+    private static String enc(String v) { return URLEncoder.encode(v == null ? "" : v, StandardCharsets.UTF_8); }
+    private static String dec(String v) { return URLDecoder.decode(v, StandardCharsets.UTF_8); }
+
+    // ═════════════════════════════════════════════════════════════════
+    // PhosphorIcons  (Phosphor, 256 viewBox, filled — same convention as the old setIcon: scale = size / 256)
+    // ═════════════════════════════════════════════════════════════════
+
+    /** Fills every FXML holder: <StackPane styleClass="icon, ic-nav" userData="address-book:18"/> */
+    private void applyPhosphorIcons(Node n) {
+        if (n == null) return;
+        if (n instanceof StackPane sp && sp.getUserData() instanceof String s && sp.getStyleClass().contains("icon")) {
+            String[] t = s.split(":");
+            fillIconHolder(sp, t[0], Double.parseDouble(t[1]));
+            return;
+        }
+        if (n instanceof Labeled l) applyPhosphorIcons(l.getGraphic()); // button graphics aren't children until skinned
+        if (n instanceof Parent p) for (Node c : p.getChildrenUnmodifiable()) applyPhosphorIcons(c);
+    }
+
+    /** Icon node for code-built UI. colorClass: ic-white | ic-nav | ic-muted | ic-soft | ic-blue | ic-dark | ic-danger */
+    private StackPane icon(String name, double size, String colorClass) {
+        StackPane holder = new StackPane();
+        holder.getStyleClass().addAll("icon", colorClass);
+        fillIconHolder(holder, name, size);
+        return holder;
+    }
+
+    private void fillIconHolder(StackPane holder, String name, double size) {
+        SVGPath p = new SVGPath();
+        p.setContent(iconPath(name));
+        p.getStyleClass().add("svg-icon");
+
+        Pane box = new Pane(p);                       // 256x256 Phosphor viewBox
+        box.setMinSize(256, 256); box.setPrefSize(256, 256); box.setMaxSize(256, 256);
+        box.setScaleX(size / 256.0);
+        box.setScaleY(size / 256.0);
+
+        holder.getChildren().setAll(new Group(box));  // Group => layout bounds include the scale
+        holder.setMinSize(size, size); holder.setPrefSize(size, size); holder.setMaxSize(size, size);
+        holder.setMouseTransparent(true);
+    }
+
+    /** Your PhosphorIcons class wins where it has the icon; PhosphorPhosphorIcons covers the rest. */
+    private String iconPath(String name) {
+        return PhosphorIcons.path(name);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // UI UTILS
+    // ═════════════════════════════════════════════════════════════════
+    private StackPane avatar(Contact c, double size, double fontSize, boolean filled) {
+        Label l = new Label(initialsOf(c.getName()));
+        l.getStyleClass().add(filled ? "avatar-text-filled" : "avatar-text-light");
+        l.setStyle("-fx-font-size: " + fontSize + "px;");
+        StackPane p = new StackPane(l);
+        p.getStyleClass().add(filled ? "avatar-filled" : "avatar-light");
+        p.setMinSize(size, size); p.setPrefSize(size, size); p.setMaxSize(size, size);
+        return p;
+    }
+
+    private HBox iconLabel(String iconName, double size, String colorClass, String text, String labelClass) {
+        HBox h = new HBox(5, icon(iconName, size, colorClass), styled(text, labelClass));
+        h.setAlignment(Pos.CENTER_LEFT);
+        return h;
+    }
+
+    private Label styled(String text, String styleClass) {
+        Label l = new Label(text);
+        l.getStyleClass().add(styleClass);
+        return l;
+    }
+
+    private Region spacer() {
+        Region r = new Region();
+        HBox.setHgrow(r, Priority.ALWAYS);
+        return r;
+    }
+
+    private void show(Node n, boolean on) { n.setVisible(on); n.setManaged(on); }
 
     private String initialsOf(String name) {
         if (name == null || name.isBlank()) return "?";
@@ -987,229 +1282,49 @@ public class MainController {
         return (first + last).toUpperCase();
     }
 
-    private void showFinderNotFound(String startName, String endName) {
-        showOnly(resultNotFoundBox, resultIdleBox, resultFoundBox);
-        networkHintLabel.setVisible(true);
-        networkHintLabel.setManaged(true);
-        notFoundMessageLabel.setText("There is no connection between " + startName + " and " + endName + ".");
-        drawNetworkGraph(Collections.emptyList());
+    private Comparator<Contact> byName(boolean ascending) {
+        Comparator<Contact> cmp = Comparator.comparing(c -> c.getName() == null ? "" : c.getName(), String.CASE_INSENSITIVE_ORDER);
+        return ascending ? cmp : cmp.reversed();
     }
 
-    private void showOnly(Region toShow, Region... others) {
-        toShow.setVisible(true);
-        toShow.setManaged(true);
-        for (Region other : others) {
-            other.setVisible(false);
-            other.setManaged(false);
+    private boolean containsIgnoreCase(String field, String q) { return field != null && field.toLowerCase().contains(q); }
+
+    private String dash(String s) { return (s == null || s.isBlank()) ? "—" : s; }
+
+    private String addedText(Contact c) { return dash(c.getFormattedDateAdded()); }
+
+    /** Detail line under a contact's name, driven by the Settings display format. */
+    private String subtitle(Contact c) {
+        switch (displayFormat) {
+            case EMAIL: return dash(c.getEmail());
+            case BOTH:  return dash(c.getPhone()) + "  ·  " + dash(c.getEmail());
+            default:    return dash(c.getPhone());
         }
     }
 
-    /**
-     * Draws every contact as a node arranged in a circle, every connection
-     * as a line between nodes, and — when a path was just found — redraws
-     * that path's edges and nodes in the accent color on top.
-     */
-    private void drawNetworkGraph(List<Integer> highlightedPathIds) {
-        GraphicsContext gc = networkCanvas.getGraphicsContext2D();
-        double width = networkCanvas.getWidth();
-        double height = networkCanvas.getHeight();
-        gc.clearRect(0, 0, width, height);
-
-        List<Contact> contacts = allContactsData;
-        List<com.connectsphere.model.Connection> connections = connectionDAO.getAllConnections();
-
-        networkStatsLabel.setText(contacts.size() + " contacts · " + connections.size() + " connections");
-
-        if (contacts.isEmpty()) return;
-
-        // Lay contacts out evenly around a circle.
-        Map<Integer, double[]> positions = new HashMap<>();
-        double centerX = width / 2.0;
-        double centerY = height / 2.0;
-        double radius = Math.min(width, height) / 2.0 - 40;
-
-        for (int i = 0; i < contacts.size(); i++) {
-            double angle = 2 * Math.PI * i / contacts.size();
-            double x = centerX + radius * Math.cos(angle);
-            double y = centerY + radius * Math.sin(angle);
-            positions.put(contacts.get(i).getId(), new double[]{x, y});
-        }
-
-        // Build the set of consecutive-pair edges that belong to the
-        // highlighted path, so we know which lines to draw in accent color.
-        Set<String> highlightedEdges = new HashSet<>();
-        for (int i = 0; i < highlightedPathIds.size() - 1; i++) {
-            highlightedEdges.add(edgeKey(highlightedPathIds.get(i), highlightedPathIds.get(i + 1)));
-        }
-        Set<Integer> highlightedNodes = new HashSet<>(highlightedPathIds);
-
-        // Edges first (so nodes draw on top).
-        for (com.connectsphere.model.Connection c : connections) {
-            double[] p1 = positions.get(c.getContactId1());
-            double[] p2 = positions.get(c.getContactId2());
-            if (p1 == null || p2 == null) continue;
-
-            boolean isPathEdge = highlightedEdges.contains(edgeKey(c.getContactId1(), c.getContactId2()));
-            gc.setStroke(isPathEdge ? Color.web("#1e6fa8") : Color.web("#c9ced6"));
-            gc.setLineWidth(isPathEdge ? 3 : 1.5);
-            gc.strokeLine(p1[0], p1[1], p2[0], p2[1]);
-        }
-
-        // Nodes.
-        double nodeRadius = 14;
-        for (Contact c : contacts) {
-            double[] p = positions.get(c.getId());
-            boolean onPath = highlightedNodes.contains(c.getId());
-
-            gc.setFill(onPath ? Color.web("#1e6fa8") : Color.web("#8a93a3"));
-            gc.fillOval(p[0] - nodeRadius, p[1] - nodeRadius, nodeRadius * 2, nodeRadius * 2);
-
-            gc.setFill(Color.WHITE);
-            gc.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
-            gc.fillText(initialsOf(c.getName()), p[0], p[1] + 4);
-
-            gc.setFill(Color.web("#333333"));
-            gc.fillText(c.getName(), p[0], p[1] + nodeRadius + 14);
-        }
+    private String joinNames(List<String> names) {
+        if (names.size() <= 1) return String.join("", names);
+        return String.join(", ", names.subList(0, names.size() - 1)) + " and " + names.get(names.size() - 1);
     }
 
-    private String edgeKey(int a, int b) {
-        return Math.min(a, b) + "-" + Math.max(a, b);
+    private String plural(long n, String word) { return n + " " + word + (n == 1 ? "" : "s"); }
+
+    // dialogs
+    private boolean confirm(String title, String msg, String action) {
+        ButtonType yes = new ButtonType(action, ButtonBar.ButtonData.OK_DONE);
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, msg, yes, ButtonType.CANCEL);
+        a.setTitle(title);
+        a.setHeaderText(null);
+        return a.showAndWait().filter(b -> b == yes).isPresent();
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // SETTINGS PAGE FUNCTIONS
-    // ═════════════════════════════════════════════════════════════════
-
-    @FXML
-    private void onThemeChange(ActionEvent event) {
-        // TODO: persist chosen theme; not part of the contacts/connections DB.
+    private void info(String title, String msg) {
+        Alert a = new Alert(Alert.AlertType.INFORMATION, msg, ButtonType.OK);
+        a.setTitle(title); a.setHeaderText(title); a.showAndWait();
     }
 
-    @FXML
-    private void onAccentColorChange(ActionEvent event) {
-        // TODO: persist chosen accent color; not part of the contacts/connections DB.
-    }
-
-    @FXML
-    private void onCompactListToggle() {
-        boolean compact = compactListToggle.isSelected();
-        String compactClass = "compact";
-        if (compact) {
-            if (!allContactsListView.getStyleClass().contains(compactClass)) {
-                allContactsListView.getStyleClass().add(compactClass);
-                recentContactsListView.getStyleClass().add(compactClass);
-            }
-        } else {
-            allContactsListView.getStyleClass().remove(compactClass);
-            recentContactsListView.getStyleClass().remove(compactClass);
-        }
-    }
-
-    @FXML
-    private void onSortingChange(ActionEvent event) {
-        // Contacts are always loaded name-ascending from ContactDAO; a
-        // "Last Name" mode would need a lastName column, which the current
-        // schema doesn't have. Left as a TODO rather than faked.
-    }
-
-    @FXML
-    private void onDisplayFormatChange() {
-        refreshVisibleListCells();
-    }
-
-    @FXML
-    private void onShowFavoritesToggle() {
-        // Re-run so the combined "not searching AND toggle is on" rule applies.
-        filterContacts(contactsSearchField.getText());
-    }
-
-    @FXML
-    private void onShowRecentToggle() {
-        filterContacts(contactsSearchField.getText());
-    }
-
-    @FXML
-    private void onBackupDatabase() {
-        // TODO: real file export of contacts.db; left as a UI-only stub.
-        String originalText = backupButton.getText();
-        backupButton.setText("Backup Saved");
-        backupButton.getStyleClass().add("outline-button-success");
-
-        PauseTransition revert = new PauseTransition(Duration.seconds(2.5));
-        revert.setOnFinished(e -> {
-            backupButton.setText(originalText);
-            backupButton.getStyleClass().remove("outline-button-success");
-        });
-        revert.play();
-    }
-
-    @FXML
-    private void onRestoreDatabase() {
-        // TODO: real file import; left as a UI-only stub.
-    }
-
-    @FXML
-    private void onShowClearWarning() {
-        clearDataNormalBox.setVisible(false);
-        clearDataNormalBox.setManaged(false);
-        clearDataWarningBox.setVisible(true);
-        clearDataWarningBox.setManaged(true);
-    }
-
-    @FXML
-    private void onCancelClearWarning() {
-        clearDataWarningBox.setVisible(false);
-        clearDataWarningBox.setManaged(false);
-        clearDataNormalBox.setVisible(true);
-        clearDataNormalBox.setManaged(true);
-    }
-
-    @FXML
-    private void onConfirmClearData() {
-        try {
-            contactDAO.deleteAllContacts(); // cascades to connections
-            reloadAllContactsFromDatabase();
-            refreshRecentSection();
-            refreshDatabaseStats();
-            resetFinderResultState();
-            populateFinderComboItems();
-        } catch (RuntimeException e) {
-            showErrorAlert("Could not clear data", e.getMessage());
-        } finally {
-            onCancelClearWarning();
-        }
-    }
-
-    @FXML
-    private void onOpenLogFile() {
-        // TODO: open the application log file with the OS default viewer.
-    }
-
-    @FXML
-    private void onCheckForUpdates() {
-        // TODO: call an update-check service/endpoint.
-    }
-
-    @FXML
-    private void onReportIssue() {
-        // TODO: open an issue-reporting form or mail-to link.
-    }
-
-    // ═════════════════════════════════════════════════════════════════
-    // DATABASE CONNECTION POINTS
-    // ═════════════════════════════════════════════════════════════════
-
-    private void refreshDatabaseStats() {
-        dbStatusValueLabel.setText("Connected");
-        dbNameValueLabel.setText("contacts.db");
-        totalContactsValueLabel.setText(String.valueOf(contactDAO.getContactCount()));
-        totalConnectionsValueLabel.setText(String.valueOf(connectionDAO.getConnectionCount()));
-    }
-
-    private void showErrorAlert(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR, message == null ? "An unexpected error occurred." : message);
-        alert.setHeaderText(title);
-        alert.showAndWait();
+    private void error(String title, String msg) {
+        Alert a = new Alert(Alert.AlertType.ERROR, msg == null ? "An unexpected error occurred." : msg, ButtonType.OK);
+        a.setHeaderText(title); a.showAndWait();
     }
 }
