@@ -25,7 +25,7 @@ public class ContactDAO {
     public Contact addContact(Contact contact) {
         String dateAdded = contact.getDateAdded() != null ? contact.getDateAdded() : LocalDateTime.now().toString();
 
-        String sql = "INSERT INTO contacts (name, phone, email, date_added, is_favorite) VALUES (?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO contacts (name, phone, email, date_added, is_favorite, photo_path) VALUES (?, ?, ?, ?, ?, ?)";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
@@ -34,6 +34,7 @@ public class ContactDAO {
             stmt.setString(3, contact.getEmail());
             stmt.setString(4, dateAdded);
             stmt.setInt(5, contact.isFavorite() ? 1 : 0);
+            stmt.setString(6, contact.getPhotoPath());
             stmt.executeUpdate();
 
             try (ResultSet keys = stmt.getGeneratedKeys()) {
@@ -49,19 +50,20 @@ public class ContactDAO {
     }
 
     /**
-     * Updates an existing contact's editable details (name/phone/email),
+     * Updates an existing contact's editable details (name/phone/email/photo),
      * matched by id. date_added and is_favorite are intentionally not
      * touched here — favorite status goes through setFavorite() instead.
      */
     public void updateContact(Contact contact) {
-        String sql = "UPDATE contacts SET name = ?, phone = ?, email = ? WHERE id = ?";
+        String sql = "UPDATE contacts SET name = ?, phone = ?, email = ?, photo_path = ? WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, contact.getName());
             stmt.setString(2, contact.getPhone());
             stmt.setString(3, contact.getEmail());
-            stmt.setInt(4, contact.getId());
+            stmt.setString(4, contact.getPhotoPath());
+            stmt.setInt(5, contact.getId());
             stmt.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to update contact id " + contact.getId(), e);
@@ -106,7 +108,7 @@ public class ContactDAO {
      * Used to populate the TableView and the Start/Destination selectors.
      */
     public List<Contact> getAllContacts() {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite FROM contacts ORDER BY name COLLATE NOCASE";
+        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts ORDER BY name COLLATE NOCASE";
         List<Contact> contacts = new ArrayList<>();
         Connection conn = DatabaseManager.getConnection();
 
@@ -127,7 +129,7 @@ public class ContactDAO {
      * Favorite Contacts card section on the Contacts page.
      */
     public List<Contact> getFavoriteContacts() {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite FROM contacts WHERE is_favorite = 1 ORDER BY name COLLATE NOCASE";
+        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts WHERE is_favorite = 1 ORDER BY name COLLATE NOCASE";
         List<Contact> contacts = new ArrayList<>();
         Connection conn = DatabaseManager.getConnection();
 
@@ -148,7 +150,7 @@ public class ContactDAO {
      * callers (like BFSPathFinder's caller) should check for that.
      */
     public Contact getContactById(int id) {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite FROM contacts WHERE id = ?";
+        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -171,7 +173,7 @@ public class ContactDAO {
      */
     public List<Contact> searchContacts(String keyword) {
         String sql = """
-                SELECT id, name, phone, email, date_added, is_favorite FROM contacts
+                SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts
                 WHERE name  LIKE ? COLLATE NOCASE
                    OR phone LIKE ? COLLATE NOCASE
                    OR email LIKE ? COLLATE NOCASE
@@ -203,7 +205,7 @@ public class ContactDAO {
      * page. Relies on AUTOINCREMENT ids being assigned in insertion order.
      */
     public List<Contact> getRecentContacts(int limit) {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite FROM contacts ORDER BY id DESC LIMIT ?";
+        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts ORDER BY id DESC LIMIT ?";
         List<Contact> contacts = new ArrayList<>();
         Connection conn = DatabaseManager.getConnection();
 
@@ -262,7 +264,8 @@ public class ContactDAO {
                 rs.getString("phone"),
                 rs.getString("email"),
                 rs.getString("date_added"),
-                rs.getInt("is_favorite") == 1
+                rs.getInt("is_favorite") == 1,
+                rs.getString("photo_path")
         );
     }
 }

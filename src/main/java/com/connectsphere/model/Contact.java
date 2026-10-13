@@ -19,21 +19,29 @@ public class Contact {
     private String email;
     private String dateAdded;  // raw LocalDateTime.toString() value from ContactDAO, e.g. "2026-09-27T14:03:10.123"; null for legacy rows added before this column existed
     private boolean favorite;
+    private String photoPath;  // relative path under data/photos/, e.g. "data/photos/<uuid>.jpg"; null means no photo
 
-    public Contact(int id, String name, String phone, String email, String dateAdded, boolean favorite) {
+    public Contact(int id, String name, String phone, String email, String dateAdded, boolean favorite, String photoPath) {
         this.id = id;
         this.name = name;
         this.phone = phone;
         this.email = email;
         this.dateAdded = dateAdded;
         this.favorite = favorite;
+        this.photoPath = photoPath;
     }
 
     // Convenience constructor for a brand-new contact not yet in the database.
     // dateAdded is left null and favorite defaults to false — ContactDAO.addContact
     // fills in dateAdded (stamped with "now") the moment the row is actually inserted.
     public Contact(String name, String phone, String email) {
-        this(-1, name, phone, email, null, false);
+        this(-1, name, phone, email, null, false, null);
+    }
+
+    // Convenience constructor for a new contact that already has a photo path chosen
+    // by the upload dialog (photo was copied to data/photos/ before this call).
+    public Contact(String name, String phone, String email, String photoPath) {
+        this(-1, name, phone, email, null, false, photoPath);
     }
 
     public int getId() {
@@ -82,6 +90,14 @@ public class Contact {
 
     public void setFavorite(boolean favorite) {
         this.favorite = favorite;
+    }
+
+    public String getPhotoPath() {
+        return photoPath;
+    }
+
+    public void setPhotoPath(String photoPath) {
+        this.photoPath = photoPath;
     }
 
     /**

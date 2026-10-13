@@ -8,6 +8,7 @@ import com.connectsphere.model.Contact;
 import com.connectsphere.util.BFSPathFinder;
 import com.connectsphere.util.ContactGraph;
 import com.connectsphere.util.PhosphorIcons;
+import com.connectsphere.util.SettingsManager;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -43,6 +44,7 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -85,6 +87,8 @@ public class MainController {
     private enum DisplayFormat { PHONE, EMAIL, BOTH }
     private DisplayFormat displayFormat = DisplayFormat.PHONE;
     private static final String BACKUP_HEADER = "CONTACT_NETWORK_BACKUP_V1";
+    /** App-managed folder where uploaded contact photos are stored. */
+    private static final String PHOTOS_FOLDER = "data/photos";
 
     // Connection Finder state
     private Contact lastA, lastB;
@@ -99,7 +103,8 @@ public class MainController {
     private Set<Integer> formPreviousIds = Collections.emptySet(); // connections before editing
     private final ObservableList<Contact> formCandidateData = FXCollections.observableArrayList();
     private FilteredList<Contact> formCandidates;
-    private Image formPhoto;
+    private Image formPhoto;        // in-memory preview image (transient, for display only)
+    private String formPhotoPath;   // persisted path under data/photos/ (null = no photo)
     private static final boolean REQUIRE_PHONE = true;            // the form marks only Email as "Optional"
 
     // ═════════════════════════════════════════════════════════════════
@@ -176,6 +181,11 @@ public class MainController {
 
         // Make sure the schema exists before touching it (CREATE TABLE IF NOT EXISTS — safe to repeat).
         DatabaseManager.initializeDatabase();
+
+        // Restore settings saved from the previous session.  Must run after the
+        // ToggleGroups are wired above so selecting a radio fires no stray listeners,
+        // and before reloadAllFromDatabase() so the first render uses the right format.
+        loadPersistedSettings();
 
         // Live search over the shared in-memory cache.
         searchField.textProperty().addListener((o, a, b) -> {
@@ -406,10 +416,22 @@ public class MainController {
         favoriteToggle.setSelected(editing && existing.isFavorite());
         for (Label l : List.of(nameError, phoneError, emailError, photoError)) hideFieldError(l);
 
-        // photo (preview only for now: Contact has no photo field)
+        // Reset photo state, then restore the saved photo when editing an existing contact.
         formPhoto = null;
+        formPhotoPath = null;
         photoView.setImage(null);
         photoHint.setText("JPG or PNG, up to 2 MB");
+        if (editing && existing.getPhotoPath() != null) {
+            File photoFile = new File(existing.getPhotoPath());
+            if (photoFile.exists()) {
+                Image img = new Image(photoFile.toURI().toString(), 144, 144, false, true);
+                if (!img.isError()) {
+                    formPhoto = img;
+                    formPhotoPath = existing.getPhotoPath();
+                    photoView.setImage(img);
+                }
+            }
+        }
         updatePhotoDisplay();
 
         // titles / buttons
@@ -465,6 +487,7 @@ public class MainController {
                 formContact.setName(name);
                 formContact.setPhone(phone);
                 formContact.setEmail(email);
+                formContact.setPhotoPath(formPhotoPath);
                 contactDAO.updateContact(formContact);
                 if (formContact.isFavorite() != wantFavorite) {
                     contactDAO.setFavorite(formContact.getId(), wantFavorite);
@@ -472,7 +495,7 @@ public class MainController {
                 }
                 contactId = formContact.getId();
             } else {
-                Contact saved = contactDAO.addContact(new Contact(name, phone, email));
+                Contact saved = contactDAO.addContact(new Contact(name, phone, email, formPhotoPath));
                 contactId = saved.getId();
                 if (wantFavorite) contactDAO.setFavorite(contactId, true);
             }
@@ -497,6 +520,21 @@ public class MainController {
 
         Image img = new Image(f.toURI().toString(), 144, 144, false, true);
         if (img.isError()) { fieldError(photoError, "Could not read that image."); return; }
+
+        // Copy the file into the app-managed photos folder so the photo persists
+        // even if the user moves or deletes the original file.
+        try {
+            File photosDir = new File(PHOTOS_FOLDER);
+            if (!photosDir.exists()) photosDir.mkdirs();
+            String name = f.getName();
+            String ext = name.contains(".") ? name.substring(name.lastIndexOf('.')) : ".jpg";
+            File dest = new File(photosDir, UUID.randomUUID() + ext);
+            Files.copy(f.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            formPhotoPath = dest.getPath();
+        } catch (IOException e) {
+            fieldError(photoError, "Could not save photo: " + e.getMessage());
+            return;
+        }
 
         hideFieldError(photoError);
         formPhoto = img;
@@ -807,7 +845,7 @@ public class MainController {
     private void wireRow(Node row, Contact c) {
         ContextMenu menu = new ContextMenu();
         MenuItem edit = new MenuItem("Edit Contact");
-        edit.setOnAction(e -> openContactForm(null));
+        edit.setOnAction(e -> openContactForm(c));
         MenuItem delete = new MenuItem("Delete Contact");
         delete.setOnAction(e -> confirmAndDeleteContact(c));
         menu.getItems().addAll(edit, delete);
@@ -815,7 +853,7 @@ public class MainController {
         row.setOnContextMenuRequested(e -> { menu.show(row, e.getScreenX(), e.getScreenY()); e.consume(); });
         row.setOnMouseClicked(e -> {
             if (e.getButton() != MouseButton.PRIMARY) return;
-            if (e.getClickCount() == 2) openContactForm(null);
+            if (e.getClickCount() == 2) openContactForm(c);
             else select(c);
         });
     }
@@ -1075,6 +1113,36 @@ public class MainController {
     // SETTINGS
     // ═════════════════════════════════════════════════════════════════
 
+    /**
+     * Reads {@code data/settings.properties} (written by {@link SettingsManager}) and
+     * applies the saved values to the Settings controls and the in-memory state.
+     * Called once from {@link #initialize()}, after the radio ToggleGroup is wired
+     * but before the first render.  Falls back to defaults silently if the file
+     * is missing (first launch) or unreadable.
+     */
+    private void loadPersistedSettings() {
+        Properties props = SettingsManager.load();
+
+        // ── Display format ──────────────────────────────────────────────
+        String fmt = props.getProperty(SettingsManager.KEY_FORMAT, SettingsManager.DEFAULT_FORMAT);
+        switch (fmt) {
+            case "EMAIL" -> { fmtEmail.setSelected(true); displayFormat = DisplayFormat.EMAIL; }
+            case "BOTH"  -> { fmtBoth.setSelected(true);  displayFormat = DisplayFormat.BOTH; }
+            default      -> { fmtPhone.setSelected(true);  displayFormat = DisplayFormat.PHONE; }
+        }
+
+        // ── Section toggles ─────────────────────────────────────────────
+        boolean showFav    = Boolean.parseBoolean(
+                props.getProperty(SettingsManager.KEY_SHOW_FAVORITES, SettingsManager.DEFAULT_SHOW_FAVORITES));
+        boolean showRecent = Boolean.parseBoolean(
+                props.getProperty(SettingsManager.KEY_SHOW_RECENT,    SettingsManager.DEFAULT_SHOW_RECENT));
+
+        favToggle.setSelected(showFav);
+        recentToggle.setSelected(showRecent);
+        favToggleLabel.setText(showFav    ? "On" : "Off");
+        recentToggleLabel.setText(showRecent ? "On" : "Off");
+    }
+
     /** Radio cards + both switches land here. */
     @FXML
     private void onSettingsChanged() {
@@ -1086,6 +1154,8 @@ public class MainController {
         renderRecent();
         renderDirectory();
         renderDetails();
+        // Persist changes so they survive app restarts.
+        SettingsManager.save(displayFormat.name(), favToggle.isSelected(), recentToggle.isSelected());
     }
 
     @FXML
@@ -1132,14 +1202,14 @@ public class MainController {
     }
 
     // backup file: one record per line, tab separated, text fields URL-encoded
-    //   C <id> <name> <phone> <email> <favorite>
+    //   C <id> <name> <phone> <email> <favorite> <photo_path>
     //   L <idA> <idB>
     private List<String> buildBackup() {
         List<String> out = new ArrayList<>();
         out.add(BACKUP_HEADER);
         for (Contact c : allContactsData)
             out.add(String.join("\t", "C", String.valueOf(c.getId()), enc(c.getName()), enc(c.getPhone()),
-                    enc(c.getEmail()), String.valueOf(c.isFavorite())));
+                    enc(c.getEmail()), String.valueOf(c.isFavorite()), enc(c.getPhotoPath())));
         for (Connection cn : connectionsCache)
             out.add("L\t" + cn.getContactId1() + "\t" + cn.getContactId2());
         return out;
@@ -1150,7 +1220,7 @@ public class MainController {
         if (lines.isEmpty() || !BACKUP_HEADER.equals(lines.get(0).trim()))
             throw new IllegalArgumentException("Missing backup header.");
 
-        class Rec { int oldId; String name, phone, email; boolean fav; }
+        class Rec { int oldId; String name, phone, email, photoPath; boolean fav; }
         List<Rec> recs = new ArrayList<>();
         Set<Integer> knownIds = new HashSet<>();
         List<int[]> edges = new ArrayList<>();
@@ -1163,6 +1233,8 @@ public class MainController {
                 r.oldId = Integer.parseInt(t[1]);
                 r.name = dec(t[2]); r.phone = dec(t[3]); r.email = dec(t[4]);
                 r.fav = Boolean.parseBoolean(t[5]);
+                // t[6] is photo_path — present in new backups, absent in old V1 files
+                r.photoPath = (t.length > 6 && !t[6].isBlank()) ? dec(t[6]) : null;
                 recs.add(r);
                 knownIds.add(r.oldId);
             } else if (t[0].equals("L")) {
@@ -1177,7 +1249,7 @@ public class MainController {
         contactDAO.deleteAllContacts();
         Map<Integer, Integer> idMap = new HashMap<>();
         for (Rec r : recs) {
-            Contact saved = contactDAO.addContact(new Contact(r.name, r.phone, r.email));
+            Contact saved = contactDAO.addContact(new Contact(r.name, r.phone, r.email, r.photoPath));
             if (r.fav) contactDAO.setFavorite(saved.getId(), true);
             idMap.put(r.oldId, saved.getId());
         }

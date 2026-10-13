@@ -76,7 +76,8 @@ public class DatabaseManager {
                     phone        TEXT,
                     email        TEXT,
                     date_added   TEXT,
-                    is_favorite  INTEGER NOT NULL DEFAULT 0
+                    is_favorite  INTEGER NOT NULL DEFAULT 0,
+                    photo_path   TEXT
                 );
                 """;
 
@@ -102,6 +103,7 @@ public class DatabaseManager {
         }
 
         migrateContactsTable();
+        migrateConnectionsTable();
     }
 
     /**
@@ -128,11 +130,48 @@ public class DatabaseManager {
             if (!existingColumns.contains("is_favorite")) {
                 stmt.execute("ALTER TABLE contacts ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;");
             }
+            if (!existingColumns.contains("photo_path")) {
+                stmt.execute("ALTER TABLE contacts ADD COLUMN photo_path TEXT;");
+            }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to migrate contacts table schema", e);
         }
     }
 
+    /**
+     * Adds a UNIQUE INDEX on the normalised (min, max) id pair to the
+     * connections table if it doesn't already exist.
+     *
+     * Why an index rather than a UNIQUE constraint on the table?
+     * SQLite cannot add constraints to existing tables via ALTER TABLE, so
+     * a table rebuild would be needed — risky and destructive for live data.
+     * A unique index achieves exactly the same enforcement without touching
+     * any rows, and IF NOT EXISTS makes it idempotent on every startup.
+     *
+     * Why CASE WHEN instead of MIN()/MAX()?
+     * MIN/MAX are aggregate functions; CASE WHEN is a scalar expression
+     * that SQLite's expression-index feature handles correctly across all
+     * SQLite versions supported by the JDBC driver.
+     *
+     * Effect: inserting (A, B) when (B, A) already exists raises a
+     * SQLITE_CONSTRAINT_UNIQUE error. ConnectionDAO.addConnection() always
+     * calls connectionExists() first, so this index is a silent safety
+     * net — not a change in normal behaviour.
+     */
+    private static void migrateConnectionsTable() {
+        String createIndex = """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_connection_pair
+                ON connections (
+                    CASE WHEN contact_id_1 < contact_id_2 THEN contact_id_1 ELSE contact_id_2 END,
+                    CASE WHEN contact_id_1 < contact_id_2 THEN contact_id_2 ELSE contact_id_1 END
+                );
+                """;
+        try (Statement stmt = getConnection().createStatement()) {
+            stmt.execute(createIndex);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to create unique index on connections table", e);
+        }
+    }
 
     /**
      * Call this when the application closes (e.g. in MainApp.stop()).
