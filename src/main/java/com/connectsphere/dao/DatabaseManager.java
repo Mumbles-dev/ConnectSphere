@@ -139,26 +139,45 @@ public class DatabaseManager {
     }
 
     /**
-     * Adds a UNIQUE INDEX on the normalised (min, max) id pair to the
-     * connections table if it doesn't already exist.
+     * Makes the connections table duplicate-proof.
      *
-     * Why an index rather than a UNIQUE constraint on the table?
-     * SQLite cannot add constraints to existing tables via ALTER TABLE, so
-     * a table rebuild would be needed — risky and destructive for live data.
-     * A unique index achieves exactly the same enforcement without touching
-     * any rows, and IF NOT EXISTS makes it idempotent on every startup.
+     * Order matters:
+     *   1. Delete self-connections (A-A), which are meaningless.
+     *   2. Delete duplicate pairs (A-B and B-A, or repeated rows), keeping
+     *      the lowest id per pair. This MUST run before step 3, otherwise
+     *      CREATE UNIQUE INDEX fails on existing duplicate data and the
+     *      app cannot start.
+     *   3. Create the unique index on the normalised (min, max) id pair.
      *
-     * Why CASE WHEN instead of MIN()/MAX()?
-     * MIN/MAX are aggregate functions; CASE WHEN is a scalar expression
-     * that SQLite's expression-index feature handles correctly across all
-     * SQLite versions supported by the JDBC driver.
+     * Steps 1 and 2 are no-ops on a clean database, so running them on
+     * every startup is cheap and safe. All three run in one transaction,
+     * so a failure leaves the data untouched.
      *
-     * Effect: inserting (A, B) when (B, A) already exists raises a
-     * SQLITE_CONSTRAINT_UNIQUE error. ConnectionDAO.addConnection() always
-     * calls connectionExists() first, so this index is a silent safety
-     * net — not a change in normal behaviour.
+     * A unique index is used instead of a table constraint because SQLite
+     * cannot add constraints to an existing table via ALTER TABLE, and
+     * rebuilding the table is risky for live data. CASE WHEN is used
+     * instead of MIN()/MAX() to keep the expression index portable across
+     * SQLite versions.
+     *
+     * Effect: inserting (A, B) when (B, A) exists raises a constraint
+     * error. Use "INSERT OR IGNORE" in ConnectionDAO.addConnection() so a
+     * duplicate is skipped instead of throwing.
      */
     private static void migrateConnectionsTable() {
+        String deleteSelfLoops = """
+                DELETE FROM connections WHERE contact_id_1 = contact_id_2;
+                """;
+
+        String deleteDuplicates = """
+                DELETE FROM connections
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM connections
+                    GROUP BY
+                        CASE WHEN contact_id_1 < contact_id_2 THEN contact_id_1 ELSE contact_id_2 END,
+                        CASE WHEN contact_id_1 < contact_id_2 THEN contact_id_2 ELSE contact_id_1 END
+                );
+                """;
+
         String createIndex = """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_connection_pair
                 ON connections (
@@ -166,10 +185,29 @@ public class DatabaseManager {
                     CASE WHEN contact_id_1 < contact_id_2 THEN contact_id_2 ELSE contact_id_1 END
                 );
                 """;
-        try (Statement stmt = getConnection().createStatement()) {
-            stmt.execute(createIndex);
+
+        Connection conn = getConnection();
+        try {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(deleteSelfLoops);
+                stmt.execute(deleteDuplicates);
+                stmt.execute(createIndex);
+            }
+            conn.commit();
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to create unique index on connections table", e);
+            try {
+                conn.rollback();
+            } catch (SQLException ignored) {
+                // nothing more we can do; the original error is more useful
+            }
+            throw new RuntimeException("Failed to clean up / index the connections table", e);
+        } finally {
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // connection is shared; best effort to restore the default
+            }
         }
     }
 

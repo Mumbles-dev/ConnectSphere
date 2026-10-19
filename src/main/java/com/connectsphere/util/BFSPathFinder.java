@@ -1,36 +1,35 @@
 package com.connectsphere.util;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.Set;
-import java.util.Collections;
 
 /**
- * Finds the shortest path between two contacts in a ContactGraph using
- * Breadth-First Search. This is a hand-written BFS — no shortest-path
- * library methods are used, per the project requirements.
+ * Finds ALL shortest paths between two contacts using a hand-written
+ * Breadth-First Search (no shortest-path library methods).
  *
- * How it works:
- *   1. Start at the source contact, mark it visited, push it onto a Queue.
- *   2. Repeatedly pop the front of the queue, look at its neighbors.
- *   3. Any neighbor not yet visited gets marked visited, its "parent"
- *      recorded (parent = the node we discovered it from), and gets
- *      pushed onto the back of the queue.
- *   4. Stop as soon as the destination is discovered, or the queue runs
- *      empty (meaning no path exists).
- *   5. Rebuild the path by walking backward through the parent map from
- *      destination to source, then reverse it.
+ * Unlike a plain BFS, each node keeps a LIST of parents: every neighbor
+ * that reaches it in exactly one hop less. That way equal-length
+ * alternatives (A-X-B and A-Y-B) are kept instead of discarded.
  *
- * BFS guarantees the shortest path in an unweighted graph like this one,
- * because it explores contacts in order of increasing distance from the
- * source — one "hop" at a time.
+ * Steps:
+ *   1. BFS from the start, recording dist[node] and parents[node].
+ *      - First discovery: set dist, parents = [current].
+ *      - Seen again at the SAME next level: append current as another parent.
+ *   2. Stop once we poll a node at the destination's level. FIFO order
+ *      guarantees every parent of the destination was already processed.
+ *   3. Walk backward through parents to enumerate every shortest path
+ *      (capped by MAX_PATHS to avoid explosion in dense graphs).
  */
 public class BFSPathFinder {
+
+    /** Safety cap on enumerated paths for very dense graphs. */
+    private static final int MAX_PATHS = 50;
 
     private final ContactGraph graph;
 
@@ -38,108 +37,103 @@ public class BFSPathFinder {
         this.graph = graph;
     }
 
-    /**
-     * Runs BFS from startId to destinationId and returns the result,
-     * including the full path and the distance (number of connections
-     * traversed, i.e. edges — not the number of contacts).
-     */
     public PathResult findShortestPath(int startId, int destinationId) {
 
-        // Same contact selected as both start and destination.
         if (startId == destinationId) {
-            return new PathResult(Collections.singletonList(startId), 0, true);
+            List<List<Integer>> same = new ArrayList<>();
+            same.add(Collections.singletonList(startId));
+            return new PathResult(same, 0, Collections.emptyList());
         }
 
-        // Neither contact has any connections at all — no path possible.
         if (!graph.containsContact(startId) || !graph.containsContact(destinationId)) {
             return PathResult.noPathFound();
         }
 
+        // Direct neighbors of both people, independent of which paths BFS finds.
+        List<Integer> mutualContacts = graph.getMutualContacts(startId, destinationId);
+
+        Map<Integer, Integer> dist = new HashMap<>();
+        Map<Integer, List<Integer>> parents = new HashMap<>();
         Queue<Integer> queue = new ArrayDeque<>();
-        Set<Integer> visited = new HashSet<>();
-        Map<Integer, Integer> parentMap = new HashMap<>(); // child -> parent
 
+        dist.put(startId, 0);
         queue.add(startId);
-        visited.add(startId);
-
-        boolean found = false;
 
         while (!queue.isEmpty()) {
-            int current = queue.poll(); // dequeue the next contact to explore
+            int current = queue.poll();
 
-            if (current == destinationId) {
-                found = true;
+            // Destination already discovered and we've reached its level:
+            // all of its parents (one level up) have been fully processed.
+            Integer destDist = dist.get(destinationId);
+            if (destDist != null && dist.get(current) >= destDist) {
                 break;
             }
 
+            int nextLevel = dist.get(current) + 1;
             for (int neighbor : graph.getNeighbors(current)) {
-                if (!visited.contains(neighbor)) {
-                    visited.add(neighbor);
-                    parentMap.put(neighbor, current); // remember how we got here
+                Integer known = dist.get(neighbor);
+                if (known == null) {
+                    dist.put(neighbor, nextLevel);
+                    List<Integer> p = new ArrayList<>();
+                    p.add(current);
+                    parents.put(neighbor, p);
                     queue.add(neighbor);
+                } else if (known == nextLevel) {
+                    parents.get(neighbor).add(current); // equally short alternative
                 }
             }
         }
 
-        if (!found) {
+        if (!dist.containsKey(destinationId)) {
             return PathResult.noPathFound();
         }
 
-        List<Integer> path = rebuildPath(startId, destinationId, parentMap);
-        int distance = path.size() - 1; // number of edges/connections traversed
-        return new PathResult(path, distance, true);
+        List<List<Integer>> paths = new ArrayList<>();
+        collectPaths(destinationId, startId, parents, new LinkedList<>(), paths);
+        return new PathResult(paths, dist.get(destinationId), mutualContacts);
     }
 
-    /**
-     * Walks backward from the destination to the source using the parent
-     * map built during BFS, then reverses the result into source-to-
-     * destination order.
-     */
-    private List<Integer> rebuildPath(int startId, int destinationId, Map<Integer, Integer> parentMap) {
-        java.util.LinkedList<Integer> path = new java.util.LinkedList<>();
-        Integer step = destinationId;
+    /** Walks backward from node to start through every parent, building each path. */
+    private void collectPaths(int node, int startId, Map<Integer, List<Integer>> parents,
+                              LinkedList<Integer> suffix, List<List<Integer>> out) {
+        if (out.size() >= MAX_PATHS) return;
 
-        while (step != null) {
-            path.addFirst(step);
-            if (step.equals(startId)) {
-                break;
+        suffix.addFirst(node);
+        if (node == startId) {
+            out.add(new ArrayList<>(suffix));
+        } else {
+            for (int parent : parents.get(node)) {
+                collectPaths(parent, startId, parents, suffix, out);
             }
-            step = parentMap.get(step);
         }
-        return path;
+        suffix.removeFirst();
     }
 
     /**
-     * Result of a BFS search: the ordered list of contact IDs from start
-     * to destination, the distance (edge count), and whether a path was
-     * found at all. The controller uses this to populate the
-     * "Connection Path" and "Connection Distance" display fields.
+     * Result of a search: every shortest path (start to destination),
+     * the distance in edges, and the mutual contacts (direct neighbors
+     * of both people).
      */
     public static class PathResult {
-        private final List<Integer> path;
+        private final List<List<Integer>> paths;
         private final int distance;
-        private final boolean pathExists;
+        private final List<Integer> mutualContacts;
 
-        public PathResult(List<Integer> path, int distance, boolean pathExists) {
-            this.path = path;
+        public PathResult(List<List<Integer>> paths, int distance, List<Integer> mutualContacts) {
+            this.paths = paths;
             this.distance = distance;
-            this.pathExists = pathExists;
+            this.mutualContacts = mutualContacts;
         }
 
         public static PathResult noPathFound() {
-            return new PathResult(Collections.emptyList(), -1, false);
+            return new PathResult(Collections.emptyList(), -1, Collections.emptyList());
         }
 
-        public List<Integer> getPath() {
-            return path;
-        }
-
-        public int getDistance() {
-            return distance;
-        }
-
-        public boolean pathExists() {
-            return pathExists;
-        }
+        public boolean pathExists()               { return !paths.isEmpty(); }
+        public List<List<Integer>> getAllPaths()  { return paths; }
+        public List<Integer> getPath()            { return paths.isEmpty() ? Collections.emptyList() : paths.get(0); }
+        public int getDistance()                  { return distance; }
+        public List<Integer> getMutualContacts()  { return mutualContacts; }
+        public int getMutualCount()               { return mutualContacts.size(); }
     }
 }

@@ -37,6 +37,12 @@ import javafx.collections.transformation.FilteredList;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.shape.Circle;
+import javafx.animation.Animation;
+import javafx.animation.FadeTransition;
+import javafx.animation.KeyFrame;
+import javafx.animation.ParallelTransition;
+import javafx.animation.Timeline;
+import javafx.util.Duration;
 
 import java.io.File;
 import java.io.IOException;
@@ -93,9 +99,24 @@ public class MainController {
     // Connection Finder state
     private Contact lastA, lastB;
     private List<Contact> lastPath;
+    private List<List<Contact>> lastPaths = Collections.emptyList(); // every shortest route
+    private Set<Integer> lastMutual = Collections.emptySet();
     private double zoom = 1.0;
     private final Canvas gridCanvas = new Canvas();
     private final Pane zoomLayer = new Pane();
+
+    // Route cycling
+    private static final double DIM_OPACITY = 0.30;
+    private int activeRoute = 0;
+    private Timeline routeCycler;
+    private ParallelTransition listFade, graphFade;
+
+    // Built by renderGraph(); lets us cross-fade without redrawing
+    private final Map<String, Line> hotEdges = new HashMap<>();
+    private final Map<String, Label> hotPills = new HashMap<>();
+    private final Map<String, Set<Integer>> edgeRoutes = new HashMap<>(); // edge key -> routes using it
+    private final Map<Integer, Set<Integer>> nodeRoutes = new HashMap<>(); // contact id -> routes using it
+    private final Map<Integer, Node> midNodeViews = new HashMap<>();       // intermediate nodes only
 
     // Add / Edit form state
     private Contact formContact;                                   // null = adding
@@ -115,8 +136,7 @@ public class MainController {
     @FXML private Label navContactsCount, statContacts, statConnections;
     @FXML private Label breadcrumbCurrent, headerSummary;
     @FXML private StackPane pageStack;
-    @FXML private ScrollPane contactsPage;
-    @FXML private VBox finderPage, settingsPage;
+    @FXML private ScrollPane contactsPage, finderPage, settingsPage, pathScroll;
 
     // FXML — Contacts page
     @FXML private Label favoritesCount, recentCount, footerCount;
@@ -209,6 +229,8 @@ public class MainController {
             cb.setItems(allContactsData);
             cb.setCellFactory(v -> contactCell(false));
             cb.setButtonCell(contactCell(true));
+            graphPane.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
+            pathList.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
         }
         // "Find connection" stays disabled until both contacts are chosen.
         findBtn.disableProperty().bind(fromCombo.valueProperty().isNull().or(toCombo.valueProperty().isNull()));
@@ -231,6 +253,8 @@ public class MainController {
     @FXML private void onNavSettings() { showPage(settingsPage); }
 
     private void showPage(Node page) {
+        if (page != finderPage) stopRouteCycler();
+
         for (Node n : pageStack.getChildren()) {
             boolean on = n == page;
             n.setVisible(on);
@@ -873,35 +897,54 @@ public class MainController {
         zoomLayer.setScaleY(zoom);
     }
 
-    /**
-     * Old algorithm, unchanged: build the graph fresh from the connections table on every search
-     * (so it always reflects the latest data) and run BFSPathFinder on it.
-     */
-    private List<Contact> findShortestPath(Contact start, Contact end) {
+    /** Contacts directly connected to BOTH a and b. Uses the same adjacency the graph draws from. */
+    private Set<Integer> mutualIds(Contact a, Contact b) {
+        Set<Integer> result = new LinkedHashSet<>(links.getOrDefault(a.getId(), Collections.emptySet()));
+        result.retainAll(links.getOrDefault(b.getId(), Collections.emptySet()));
+        result.remove(a.getId());
+        result.remove(b.getId());
+        return result;
+    }
+
+    private List<List<Contact>> findShortestPaths(Contact start, Contact end) {
         ContactGraph graph = new ContactGraph(connectionDAO.getAllConnections());
-        BFSPathFinder finder = new BFSPathFinder(graph);
-        BFSPathFinder.PathResult result = finder.findShortestPath(start.getId(), end.getId());
+        BFSPathFinder.PathResult result = new BFSPathFinder(graph).findShortestPath(start.getId(), end.getId());
         if (!result.pathExists()) return null;
 
-        List<Contact> path = new ArrayList<>();
-        for (int id : result.getPath()) {
-            Contact c = contactsById.get(id);
-            if (c == null) c = contactDAO.getContactById(id); // fallback, shouldn't normally hit
-            path.add(c);
+        List<List<Contact>> routes = new ArrayList<>();
+        for (List<Integer> ids : result.getAllPaths()) {
+            List<Contact> route = new ArrayList<>();
+            for (int id : ids) {
+                Contact c = contactsById.get(id);
+                if (c == null) c = contactDAO.getContactById(id); // fallback, shouldn't normally hit
+                route.add(c);
+            }
+            routes.add(route);
         }
-        return path;
+        return routes;
     }
 
     private void renderFinder() {
+        stopRouteCycler();
+
         Contact a = fromCombo.getValue(), b = toCombo.getValue();
-        List<Contact> path = (a != null && b != null && a.getId() != b.getId()) ? findShortestPath(a, b) : null;
+        boolean distinct = a != null && b != null && a.getId() != b.getId();
+
+        List<List<Contact>> paths = distinct ? findShortestPaths(a, b) : null;
+        List<Contact> path = paths == null ? null : paths.get(0);
         lastA = a; lastB = b; lastPath = path;
+        lastPaths = paths == null ? Collections.emptyList() : paths;
+        lastMutual = distinct ? mutualIds(a, b) : Collections.emptySet();
+        activeRoute = 0;
 
         finderSearchHint.setText("Search across all " + allContactsData.size() + " contacts");
         networkSubtitle.setText(plural(allContactsData.size(), "contact") + " · " + plural(connectionCount(), "direct connection"));
 
         renderResultCard(a, b, path);
         renderGraph();
+
+        // only animate while the Finder page is actually on screen
+        if (finderPage.isVisible() && lastPaths.size() > 1) startRouteCycler();
     }
 
     private void renderResultCard(Contact a, Contact b, List<Contact> path) {
@@ -909,6 +952,7 @@ public class MainController {
         show(statsBox, found);
         show(pathHeader, found);
         show(pathList, found);
+        show(pathScroll, found);
         show(pathNote, found && path.size() > 2);
         show(pathPill, found);
         pathList.getChildren().clear();
@@ -936,41 +980,38 @@ public class MainController {
         }
 
         int dist = path.size() - 1;
-        List<String> mids = path.subList(1, path.size() - 1).stream().map(Contact::getName).collect(Collectors.toList());
+        int routeCount = lastPaths.size();
+
+        List<String> mutualNames = lastMutual.stream()
+                .map(contactsById::get).filter(Objects::nonNull)
+                .map(Contact::getName).collect(Collectors.toList());
+
+// every intermediate contact on ANY shortest route
+        Set<Integer> midIds = new LinkedHashSet<>();
+        for (List<Contact> route : lastPaths)
+            for (int i = 1; i < route.size() - 1; i++) midIds.add(route.get(i).getId());
+        List<String> midNames = midIds.stream()
+                .map(contactsById::get).filter(Objects::nonNull)
+                .map(Contact::getName).collect(Collectors.toList());
+
+        String title;
+        if (dist == 1) title = "Directly connected";
+        else if (routeCount == 1 || dist == 2) title = "Connected through " + joinNames(midNames);
+        else title = plural(routeCount, "shortest route") + " found";
 
         resultStatus.setText("CONNECTION FOUND");
-        resultTitle.setText(dist == 1 ? "Directly connected" : "Connected through " + joinNames(mids));
+        resultTitle.setText(title);
         resultDesc.setText(dist == 1
                 ? a.getName() + " and " + b.getName() + " are directly connected."
-                : a.getName() + " and " + b.getName() + " are " + dist + " connections apart.");
+                : a.getName() + " and " + b.getName() + " are " + dist + " connections apart"
+                  + (routeCount > 1 ? " (" + plural(routeCount, "equally short route") + ")." : "."));
         statDistance.setText(String.valueOf(dist));
         statDistanceLabel.setText(dist == 1 ? "Connection" : "Connections");
-        statMutual.setText(String.valueOf(mids.size()));
-        statMutualLabel.setText(mids.size() == 1 ? "Mutual contact" : "Mutual contacts");
+        statMutual.setText(String.valueOf(mutualNames.size()));
+        statMutualLabel.setText(mutualNames.size() == 1 ? "Mutual contact" : "Mutual contacts");
         pathNoteLabel.setText("No direct connection between these contacts.");
-        pathSummary.setText(path.stream().map(Contact::getName).collect(Collectors.joining(" → ")));
 
-        for (int i = 0; i < path.size(); i++) {
-            Contact c = path.get(i);
-            boolean end = i == 0 || i == path.size() - 1;
-            String sub = i == 0 ? "Starting contact" : (end ? "Destination contact" : "Mutual contact");
-
-            HBox node = new HBox(12, avatar(c, 36, 14, end),
-                    new VBox(4, styled(c.getName(), "path-node-name"), styled(sub, "path-node-sub")));
-            node.setAlignment(Pos.CENTER_LEFT);
-            pathList.getChildren().add(node);
-
-            if (i < path.size() - 1) {
-                Region line = new Region();
-                line.getStyleClass().add("path-connector-line");
-                line.setMinSize(2, 24); line.setPrefSize(2, 24); line.setMaxSize(2, 24);
-                HBox connector = new HBox(29, line, styled("Direct connection", "path-connector-text"));
-                connector.setAlignment(Pos.CENTER_LEFT);
-                connector.setPadding(new Insets(0, 0, 0, 17));
-                connector.setMinHeight(32); connector.setPrefHeight(32);
-                pathList.getChildren().add(connector);
-            }
-        }
+        renderActiveRoute();
     }
 
     private void onGraphResized() {
@@ -990,29 +1031,63 @@ public class MainController {
      * otherwise every contact is placed on a circle. Edges come from the connections cache.
      */
     private void renderGraph() {
+        if (graphFade != null) graphFade.stop();
+        hotEdges.clear(); hotPills.clear(); edgeRoutes.clear(); nodeRoutes.clear(); midNodeViews.clear();
+
         double w = graphPane.getWidth(), h = graphPane.getHeight();
         zoomLayer.getChildren().clear();
         if (w <= 0 || h <= 0 || allContactsData.isEmpty()) return;
         zoomLayer.setPrefSize(w, h);
         zoomLayer.resize(w, h);
 
-        boolean pathMode = lastPath != null && lastPath.size() >= 2;
+        boolean pathMode = lastPath != null && lastPath.size() >= 2 && !lastPaths.isEmpty();
         Map<Integer, double[]> pos = new HashMap<>();   // id -> {cx, cy, diameter}
         Set<Integer> pathIds = new HashSet<>();
 
         if (pathMode) {
             int n = lastPath.size();
+
+            // which routes use which node / edge (drives the cross-fade)
+            for (int r = 0; r < lastPaths.size(); r++) {
+                List<Contact> route = lastPaths.get(r);
+                for (int i = 0; i < route.size(); i++) {
+                    nodeRoutes.computeIfAbsent(route.get(i).getId(), k -> new HashSet<>()).add(r);
+                    if (i < route.size() - 1)
+                        edgeRoutes.computeIfAbsent(edgeKey(route.get(i).getId(), route.get(i + 1).getId()),
+                                k -> new HashSet<>()).add(r);
+                }
+            }
+
+            // layout: group contacts by position along the route, across ALL routes
+            List<Set<Integer>> byLevel = new ArrayList<>();
+            for (int i = 0; i < n; i++) byLevel.add(new LinkedHashSet<>());
+            for (List<Contact> route : lastPaths)
+                for (int i = 0; i < n && i < route.size(); i++) {
+                    int id = route.get(i).getId();
+                    byLevel.get(i).add(id);
+                    pathIds.add(id);
+                }
+
             for (int i = 0; i < n; i++) {
-                Contact c = lastPath.get(i);
-                pathIds.add(c.getId());
                 double x = w * (0.16 + 0.68 * (i / (double) (n - 1)));
                 boolean end = i == 0 || i == n - 1;
-                double y = (end || n == 2) ? h * 0.50 : h * 0.28;
-                pos.put(c.getId(), new double[]{x, y, 76});
+                List<Integer> ids = new ArrayList<>(byLevel.get(i));
+                int k = ids.size();
+                for (int j = 0; j < k; j++) {
+                    double y;
+                    if (end || n == 2) y = h * 0.50;
+                    else if (k == 1)   y = h * 0.28;
+                    else               y = h * (0.16 + 0.34 * j / (k - 1));
+                    pos.put(ids.get(j), new double[]{x, y, 76});
+                }
             }
-            List<Contact> others = allContactsData.stream().filter(c -> !pathIds.contains(c.getId())).collect(Collectors.toList());
+
+            List<Contact> others = allContactsData.stream()
+                    .filter(c -> !pathIds.contains(c.getId()))
+                    .collect(Collectors.toList());
             for (int i = 0; i < others.size(); i++)
                 pos.put(others.get(i).getId(), new double[]{w * (i + 1) / (others.size() + 1), h * 0.74, 56});
+
         } else {
             int n = allContactsData.size();
             double d = n > 4 ? 56 : 76;
@@ -1020,48 +1095,186 @@ public class MainController {
             for (int i = 0; i < n; i++) {
                 double ang = -Math.PI / 2 + 2 * Math.PI * i / n;
                 double cx = n == 1 ? w / 2 : w / 2 + r * 1.6 * Math.cos(ang);
-                double cy = n == 1 ? h * 0.45 : h * 0.46 + r * Math.sin(ang);
+                double cy = n == 1 ? h * 0.46 : h * 0.46 + r * Math.sin(ang);
                 pos.put(allContactsData.get(i).getId(), new double[]{cx, cy, d});
             }
         }
 
-        Set<String> pathEdges = new HashSet<>();
-        if (pathMode)
-            for (int i = 0; i < lastPath.size() - 1; i++)
-                pathEdges.add(edgeKey(lastPath.get(i).getId(), lastPath.get(i + 1).getId()));
-
-        // edges first (under the nodes)
-        List<Node> labels = new ArrayList<>();
+        // 1) base edges: every connection in the light colour
         for (Connection cn : connectionsCache) {
             double[] p = pos.get(cn.getContactId1()), q = pos.get(cn.getContactId2());
             if (p == null || q == null) continue;
-            boolean hot = pathEdges.contains(edgeKey(cn.getContactId1(), cn.getContactId2()));
             Line line = new Line(p[0], p[1], q[0], q[1]);
-            line.setStroke(Color.web(hot ? "#2563EB" : "#B9D0FB"));
-            line.setStrokeWidth(hot ? 3 : 2);
+            line.setStroke(Color.web("#B9D0FB"));
+            line.setStrokeWidth(2);
             line.setMouseTransparent(true);
             zoomLayer.getChildren().add(line);
-            if (hot) {
-                Label pill = styled("Direct", "edge-label");
-                pill.setLayoutX((p[0] + q[0]) / 2 - 22);
-                pill.setLayoutY((p[1] + q[1]) / 2 - 11);
-                pill.setMouseTransparent(true);
-                labels.add(pill);
-            }
+        }
+
+        // 2) hot overlay: blue edge + "Direct" pill for every edge used by ANY route.
+        //    Visible only if the edge belongs to the active route; the cycler fades them.
+        List<Node> labels = new ArrayList<>();
+        for (Connection cn : connectionsCache) {
+            String key = edgeKey(cn.getContactId1(), cn.getContactId2());
+            Set<Integer> routesUsing = edgeRoutes.get(key);
+            double[] p = pos.get(cn.getContactId1()), q = pos.get(cn.getContactId2());
+            if (routesUsing == null || p == null || q == null) continue;
+            double startOpacity = routesUsing.contains(activeRoute) ? 1 : 0;
+
+            Line hot = new Line(p[0], p[1], q[0], q[1]);
+            hot.setStroke(Color.web("#2563EB"));
+            hot.setStrokeWidth(3);
+            hot.setMouseTransparent(true);
+            hot.setOpacity(startOpacity);
+            zoomLayer.getChildren().add(hot);
+            hotEdges.put(key, hot);
+
+            Label pill = styled("Direct", "edge-label");
+            pill.setLayoutX((p[0] + q[0]) / 2 - 22);
+            pill.setLayoutY((p[1] + q[1]) / 2 - 11);
+            pill.setMouseTransparent(true);
+            pill.setOpacity(startOpacity);
+            labels.add(pill);
+            hotPills.put(key, pill);
         }
         zoomLayer.getChildren().addAll(labels);
 
+        // 3) nodes
         for (Contact c : allContactsData) {
             double[] p = pos.get(c.getId());
-            boolean end = pathMode && (c.getId() == lastPath.get(0).getId() || c.getId() == lastPath.get(lastPath.size() - 1).getId());
-            boolean mid = pathMode && pathIds.contains(c.getId()) && !end;
+            if (p == null) continue;
+
+            boolean end = pathMode && (c.getId() == lastPath.get(0).getId()
+                    || c.getId() == lastPath.get(lastPath.size() - 1).getId());
+            boolean mutual = pathMode && !end && lastMutual.contains(c.getId());
+            boolean mid = pathMode && !end && (pathIds.contains(c.getId()) || mutual);
             boolean pick = !pathMode && (idOf(lastA) == c.getId() || idOf(lastB) == c.getId());
             String ring = (end || pick) ? "endpoint" : (mid ? "mid" : "other");
             String sub;
-            if (pathMode) sub = c.getId() == lastPath.get(0).getId() ? "Starting contact" : end ? "Destination contact" : mid ? "Mutual contact" : "Contact";
-            else sub = idOf(lastA) == c.getId() ? "Starting contact" : idOf(lastB) == c.getId() ? "Destination contact" : "Contact";
-            zoomLayer.getChildren().add(graphNode(c, p[0], p[1], p[2], ring, end || pick, sub));
+            if (pathMode) sub = c.getId() == lastPath.get(0).getId() ? "Starting contact"
+                    : end ? "Destination contact"
+                      : mutual ? "Mutual contact"
+                        : mid ? "Intermediate contact" : "Contact";
+            else sub = idOf(lastA) == c.getId() ? "Starting contact"
+                    : idOf(lastB) == c.getId() ? "Destination contact" : "Contact";
+
+            Node view = graphNode(c, p[0], p[1], p[2], ring, end || pick, sub);
+
+            // intermediate contacts on some route: dim unless they're on the active one
+            Set<Integer> routesUsing = nodeRoutes.get(c.getId());
+            if (pathMode && !end && routesUsing != null) {
+                view.setOpacity(routesUsing.contains(activeRoute) ? 1 : DIM_OPACITY);
+                midNodeViews.put(c.getId(), view);
+            }
+            zoomLayer.getChildren().add(view);
         }
+    }
+
+    private void addRoute(List<Contact> route) {
+        for (int i = 0; i < route.size(); i++) {
+            Contact c = route.get(i);
+            boolean end = i == 0 || i == route.size() - 1;
+            String sub = i == 0 ? "Starting contact"
+                    : end ? "Destination contact"
+                      : lastMutual.contains(c.getId()) ? "Mutual contact" : "Intermediate contact";
+
+            HBox node = new HBox(12, avatar(c, 36, 14, end),
+                    new VBox(4, styled(c.getName(), "path-node-name"), styled(sub, "path-node-sub")));
+            node.setAlignment(Pos.CENTER_LEFT);
+            pathList.getChildren().add(node);
+
+            if (i < route.size() - 1) {
+                Region line = new Region();
+                line.getStyleClass().add("path-connector-line");
+                line.setMinSize(2, 24); line.setPrefSize(2, 24); line.setMaxSize(2, 24);
+                HBox connector = new HBox(29, line, styled("Direct connection", "path-connector-text"));
+                connector.setAlignment(Pos.CENTER_LEFT);
+                connector.setPadding(new Insets(0, 0, 0, 17));
+                connector.setMinHeight(32); connector.setPrefHeight(32);
+                pathList.getChildren().add(connector);
+            }
+        }
+    }
+
+    /** Rebuilds the path list + summary for the currently active route only. */
+    private void renderActiveRoute() {
+        pathList.getChildren().clear();
+        if (lastPaths.isEmpty()) return;
+
+        int total = lastPaths.size();
+        List<Contact> route = lastPaths.get(Math.min(activeRoute, total - 1));
+
+        pathSummary.setText(route.stream().map(Contact::getName).collect(Collectors.joining(" → ")));
+        if (total > 1)
+            pathList.getChildren().add(styled("Route " + (activeRoute + 1) + " of " + total, "path-node-sub"));
+        addRoute(route);   // existing helper, unchanged
+    }
+
+    private void startRouteCycler() {
+        stopRouteCycler();
+        if (lastPaths.size() < 2) return;
+        routeCycler = new Timeline(new KeyFrame(Duration.seconds(3.5),
+                e -> showRoute((activeRoute + 1) % lastPaths.size())));
+        routeCycler.setCycleCount(Animation.INDEFINITE);
+        routeCycler.play();
+    }
+
+    private void stopRouteCycler() {
+        if (routeCycler != null) { routeCycler.stop(); routeCycler = null; }
+        if (listFade != null)    { listFade.stop();    listFade = null; }
+        if (graphFade != null)   { graphFade.stop();   graphFade = null; }
+        pathList.setOpacity(1);
+        pathSummary.setOpacity(1);
+    }
+
+    /** Pause while the user is hovering the graph or the route list so they can read it. */
+    private void updateCyclerPause() {
+        if (routeCycler == null) return;
+        if (graphPane.isHover() || pathList.isHover()) routeCycler.pause();
+        else routeCycler.play();
+    }
+
+    /** Cross-fades from the current route to route idx (list and graph together). */
+    private void showRoute(int idx) {
+        if (lastPaths.isEmpty() || idx == activeRoute) return;
+        activeRoute = idx;
+
+        // graph: edges and nodes fade to their new state while the list fades out
+        fadeGraphTo(idx);
+
+        // list: fade out -> swap content -> fade in
+        FadeTransition outList = new FadeTransition(Duration.millis(250), pathList);
+        outList.setToValue(0);
+        FadeTransition outSum = new FadeTransition(Duration.millis(250), pathSummary);
+        outSum.setToValue(0);
+        listFade = new ParallelTransition(outList, outSum);
+        listFade.setOnFinished(e -> {
+            renderActiveRoute();
+            FadeTransition inList = new FadeTransition(Duration.millis(300), pathList);
+            inList.setToValue(1);
+            FadeTransition inSum = new FadeTransition(Duration.millis(300), pathSummary);
+            inSum.setToValue(1);
+            listFade = new ParallelTransition(inList, inSum);
+            listFade.play();
+        });
+        listFade.play();
+    }
+
+    private void fadeGraphTo(int idx) {
+        if (graphFade != null) graphFade.stop();
+        graphFade = new ParallelTransition();
+        hotEdges.forEach((key, line) -> addFade(line, edgeRoutes.get(key).contains(idx) ? 1 : 0));
+        hotPills.forEach((key, pill) -> addFade(pill, edgeRoutes.get(key).contains(idx) ? 1 : 0));
+        midNodeViews.forEach((id, node) -> addFade(node, nodeRoutes.get(id).contains(idx) ? 1 : DIM_OPACITY));
+        graphFade.play();
+    }
+
+    /** Only animates things whose target differs, so shared edges/nodes stay solid. */
+    private void addFade(Node n, double target) {
+        if (Math.abs(n.getOpacity() - target) < 0.01) return;
+        FadeTransition ft = new FadeTransition(Duration.millis(500), n);
+        ft.setToValue(target);
+        graphFade.getChildren().add(ft);
     }
 
     private String edgeKey(int a, int b) { return Math.min(a, b) + "-" + Math.max(a, b); }

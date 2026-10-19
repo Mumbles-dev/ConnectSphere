@@ -2,13 +2,14 @@
    main.css — single stylesheet for mainView
    Merges: styles.css (directory / finder / settings) + contact-form.css (add / edit)
    Font: Inter
-   Theming: palette lives in looked-up colors on .root. Add the style class
-   "dark" to the scene root to switch to the dark theme:
+   Theming: palette lives in looked-up colors on .root (and .dialog-pane, because
+   Alert dialogs are separate windows). Add the style class "dark" to the scene
+   root (and to a dialog pane) to switch to the dark theme:
        scene.getRoot().getStyleClass().add("dark");
    ===================================================================== */
 
 /* ---------- Theme tokens ---------- */
-.root {
+.root, .dialog-pane {
     -bg: #F4F7FC;
     -surface: white;
     -surface-alt: #F8FAFE;
@@ -33,7 +34,7 @@
 
     -fx-font-family: "Inter", "Segoe UI", "System";
 }
-.root.dark {
+.root.dark, .dialog-pane.dark {
     -bg: #0F1B2D;
     -surface: #16263D;
     -surface-alt: #1B2E48;
@@ -56,29 +57,27 @@
     -success-bg: #12301F;
 }
 
-.app-root, .main-area, .page { -fx-background-color: -bg; }
+.app-root, .main-area { -fx-background-color: -bg; }
 
 /* =====================================================================
    SIDEBAR
    ===================================================================== */
 .sidebar { -fx-background-color: -sidebar; }
 .brand-badge { -fx-background-color: -accent; -fx-background-radius: 10; }
-.brand-badge-icon { -fx-text-fill: white; -fx-font-size: 16px; }
 .brand-title { -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: 700; }
 .brand-subtitle { -fx-text-fill: -nav-text; -fx-font-size: 13px; }
 .sidebar-section { -fx-text-fill: -nav-text; -fx-font-size: 10px; -fx-font-weight: 600; }
 
 .nav-item { -fx-background-color: transparent; -fx-background-radius: 8; -fx-padding: 0 12 0 12;
-    -fx-alignment: CENTER_LEFT; -fx-cursor: hand; }
+    -fx-alignment: CENTER_LEFT; -fx-cursor: hand;
+    -fx-border-color: transparent; -fx-border-radius: 8; -fx-border-width: 1; }
 .nav-item:hover { -fx-background-color: rgba(255,255,255,0.05); }
-.nav-item:focused { -fx-border-color: -accent; -fx-border-radius: 8; -fx-border-width: 1; }
+/* keyboard focus only — a mouse click no longer leaves an outline behind */
+.nav-item:focused{ -fx-border-color: -accent; }
 .nav-item .nav-text { -fx-text-fill: -nav-text; -fx-font-size: 13px; -fx-font-weight: 400; }
-.nav-item .nav-icon { -fx-text-fill: -nav-text; -fx-font-size: 14px; }
 .nav-item .nav-count { -fx-text-fill: -nav-text; -fx-font-size: 12px; }
 .nav-item.active { -fx-background-color: -sidebar-card; }
 .nav-item.active .nav-text { -fx-text-fill: white; -fx-font-weight: 600; }
-.nav-item.active .nav-icon { -fx-text-fill: white; }
-.nav-icon { -fx-text-fill: -nav-text; -fx-font-size: 14px; }
 
 .sidebar-card { -fx-background-color: -sidebar-card; -fx-background-radius: 12; }
 .stat-card-title { -fx-text-fill: white; -fx-font-size: 12px; -fx-font-weight: 600; }
@@ -93,9 +92,7 @@
    ===================================================================== */
 .topbar { -fx-background-color: -surface; -fx-border-color: transparent transparent -border transparent; -fx-border-width: 0 0 1 0; }
 .crumb { -fx-text-fill: -muted; -fx-font-size: 13px; }
-.crumb-sep { -fx-text-fill: -soft; -fx-font-size: 14px; }
 .crumb-current { -fx-text-fill: -text; -fx-font-size: 13px; -fx-font-weight: 600; }
-.topbar-icon { -fx-text-fill: -accent; -fx-font-size: 14px; }
 .topbar-summary { -fx-text-fill: -muted; -fx-font-size: 12px; }
 
 /* =====================================================================
@@ -115,7 +112,7 @@
 .side-subheading   { -fx-text-fill: -text; -fx-font-size: 14px; -fx-font-weight: 600; }
 .side-name         { -fx-text-fill: -text; -fx-font-size: 16px; -fx-font-weight: 600; }
 
-/* Form label (dark, 13px) vs finder label (muted, 12px) — was a name clash */
+/* Form label (dark, 13px) vs small muted label (12px) */
 .field-label       { -fx-text-fill: -text;  -fx-font-size: 13px; -fx-font-weight: 500; }
 .field-label-muted { -fx-text-fill: -muted; -fx-font-size: 12px; -fx-font-weight: 600; }
 
@@ -136,9 +133,10 @@
 /* =====================================================================
    BUTTONS
    (.btn-primary / .primary-button and .btn-outline / .secondary-button are aliases)
+   Border width is constant (1px) so focus never shifts the content.
    ===================================================================== */
 .btn-primary, .primary-button {
-    -fx-background-color: -accent; -fx-border-color: -accent; -fx-text-fill: white;
+    -fx-background-color: -accent; -fx-border-color: -accent; -fx-border-width: 1; -fx-text-fill: white;
     -fx-font-size: 13px; -fx-font-weight: 600;
     -fx-background-radius: 8; -fx-border-radius: 8; -fx-cursor: hand;
 }
@@ -147,7 +145,7 @@
 .btn-primary:pressed, .primary-button:pressed { -fx-background-color: -accent-hover; -fx-scale-y: 0.98; }
 
 .btn-outline, .secondary-button {
-    -fx-background-color: -surface; -fx-border-color: -border; -fx-text-fill: -text;
+    -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 1; -fx-text-fill: -text;
     -fx-font-size: 13px; -fx-font-weight: 600;
     -fx-background-radius: 8; -fx-border-radius: 8; -fx-cursor: hand;
 }
@@ -159,11 +157,11 @@
 .btn-plain { -fx-background-color: transparent; -fx-text-fill: -muted; -fx-font-size: 13px; -fx-cursor: hand; }
 .btn-plain:hover { -fx-text-fill: -text; }
 
-.btn-outline-blue { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8; -fx-cursor: hand; }
+.btn-outline-blue { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-width: 1; -fx-border-radius: 8; -fx-cursor: hand; }
 .btn-outline-blue:hover { -fx-background-color: -surface-alt; }
 .btn-label-blue { -fx-text-fill: -accent; -fx-font-size: 13px; -fx-font-weight: 600; }
 
-.btn-outline-danger { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -danger-border; -fx-border-radius: 8; -fx-cursor: hand; }
+.btn-outline-danger { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -danger-border; -fx-border-width: 1; -fx-border-radius: 8; -fx-cursor: hand; }
 .btn-outline-danger:hover { -fx-background-color: -danger-bg; }
 .btn-label-danger { -fx-text-fill: -danger-strong; -fx-font-size: 13px; -fx-font-weight: 600; }
 
@@ -171,10 +169,11 @@
 .btn-primary .btn-label { -fx-text-fill: white; }
 .btn-outline .btn-label { -fx-text-fill: -text; }
 
-/* Accessibility: visible keyboard focus + disabled state */
-.btn-primary:focused, .btn-outline:focused, .primary-button:focused, .secondary-button:focused,
-.btn-outline-blue:focused, .btn-outline-danger:focused {
-    -fx-border-color: -accent; -fx-border-width: 2; -fx-background-insets: 0;
+/* Accessibility: visible keyboard focus (not after mouse clicks) + disabled state */
+.btn-primary:focused, .btn-outline:focused, .primary-button:focused,
+.secondary-button:focused, .btn-outline-blue:focused, .btn-outline-danger:focused{
+    -fx-border-color: -accent;
+    -fx-effect: dropshadow(gaussian, -accent-line, 6, 0.8, 0, 0);
 }
 .btn-primary:disabled, .primary-button:disabled,
 .btn-outline:disabled, .secondary-button:disabled { -fx-opacity: 0.5; -fx-cursor: default; }
@@ -191,7 +190,7 @@
 .side-card   { -fx-padding: 24px; }
 .card-footer { -fx-border-color: -border transparent transparent transparent; -fx-border-width: 1 0 0 0; }
 
-/* Dividers: .divider .line (container + child line) or .divider-fill (single node) */
+/* Dividers: .divider .line (Separator) or .divider-fill (plain Region) */
 .divider .line { -fx-border-color: -border; -fx-border-width: 1 0 0 0; }
 .divider-fill  { -fx-background-color: -border; }
 
@@ -219,7 +218,6 @@
 .fav-name { -fx-text-fill: -text; -fx-font-size: 14px; -fx-font-weight: 600; }
 .fav-meta { -fx-text-fill: -muted; -fx-font-size: 11px; }
 .fav-meta-muted { -fx-text-fill: -soft; -fx-font-size: 11px; }
-.fav-star, .fav-star-btn { -fx-text-fill: -accent; -fx-font-size: 14px; }
 .fav-tag-text { -fx-text-fill: -accent; -fx-font-size: 12px; }
 
 .avatar-filled { -fx-background-color: -accent; -fx-background-radius: 100px; }
@@ -229,13 +227,9 @@
 
 /* Form avatars */
 .photo-circle { -fx-background-color: -tint; -fx-background-radius: 100px; }
-.avatar-xl, .avatar-lg { -fx-background-color: -accent; -fx-background-radius: 100px; }
+.avatar-lg { -fx-background-color: -accent; -fx-background-radius: 100px; }
 .avatar-label-xl { -fx-text-fill: white; -fx-font-size: 24px; -fx-font-weight: 600; }
 .avatar-label-lg { -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: 600; }
-.avatar        { -fx-background-color: -tint; -fx-background-radius: 100px; }
-.avatar-label  { -fx-text-fill: -accent; -fx-font-size: 11px; -fx-font-weight: 600; }
-.avatar-accent { -fx-background-color: -accent; }
-.avatar-accent .avatar-label { -fx-text-fill: white; }
 .person-icon, .accent-icon { -fx-fill: -accent; }
 
 /* Rows (recent list / detail connections) */
@@ -244,15 +238,13 @@
 .row-name  { -fx-text-fill: -text;  -fx-font-size: 13px; -fx-font-weight: 600; }
 .row-phone { -fx-text-fill: -muted; -fx-font-size: 11px; }
 .row-date  { -fx-text-fill: -soft;  -fx-font-size: 11px; }
-.chev      { -fx-text-fill: -nav-text; -fx-font-size: 14px; }
-.chev.on   { -fx-text-fill: -accent; }
 
 /* =====================================================================
    DIRECTORY
    ===================================================================== */
 .search-box { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8; }
-.search-box:focused, .search-box:focused { -fx-border-color: -accent; }
-.search-icon { -fx-text-fill: -muted; -fx-font-size: 14px; }
+/* the TextField inside owns focus, so react to focus anywhere within the box */
+.search-box:focused { -fx-border-color: -accent; }
 /* Search field that sits inside .search-box (transparent) */
 .search-field, .search-field:focused {
     -fx-background-color: transparent; -fx-background-insets: 0;
@@ -275,7 +267,6 @@
 .dir-fav-tag { -fx-text-fill: -accent; -fx-font-size: 10px; }
 
 .footer-text { -fx-text-fill: -muted; -fx-font-size: 12px; }
-.footer-note { -fx-text-fill: -soft; -fx-font-size: 11px; }
 
 /* Details panel */
 .detail-name  { -fx-text-fill: -text;  -fx-font-size: 18px; -fx-font-weight: 600; }
@@ -289,7 +280,6 @@
 .conn-phone { -fx-text-fill: -muted; -fx-font-size: 12px; }
 .conn-via   { -fx-text-fill: -muted; -fx-font-size: 11px; }
 .empty-text { -fx-text-fill: -soft;  -fx-font-size: 12px; }
-.hint-icon  { -fx-text-fill: -muted; -fx-font-size: 13px; }
 .hint-text  { -fx-text-fill: -muted; -fx-font-size: 12px; }
 
 /* =====================================================================
@@ -306,15 +296,15 @@
 .field.invalid  { -fx-border-color: -danger; }
 .field.valid    { -fx-border-color: -success; }
 .field:disabled { -fx-opacity: 0.6; -fx-background-color: -surface-alt; }
-/* Compact variant for form fields (was .search-field in the form css) */
+/* Compact variant (e.g. the connection search field) */
 .field-compact  { -fx-pref-height: 38px; }
 
-/* Favorite toggle box + switch */
+/* Favorite toggle box + switch (40x24, 3px padding -> 18px thumb fits exactly) */
 .favorite-box { -fx-background-color: -surface-alt; -fx-background-radius: 8; -fx-padding: 12px; -fx-min-height: 58px; }
 .switch {
     -fx-background-color: -switch-off; -fx-background-radius: 100px;
-    -fx-pref-width: 34px; -fx-min-width: 34px; -fx-max-width: 34px;
-    -fx-pref-height: 20px; -fx-min-height: 20px; -fx-max-height: 20px;
+    -fx-pref-width: 40px; -fx-min-width: 40px; -fx-max-width: 40px;
+    -fx-pref-height: 24px; -fx-min-height: 24px; -fx-max-height: 24px;
     -fx-padding: 3px; -fx-alignment: CENTER_LEFT; -fx-content-display: GRAPHIC_ONLY;
     -fx-cursor: hand; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;
 }
@@ -330,32 +320,25 @@
 .connection-list .list-cell:filled:hover    { -fx-background-color: -surface-alt; }
 .connection-list .list-cell:filled:selected { -fx-background-color: -surface; }
 .connection-list .list-cell:empty           { -fx-border-color: transparent; -fx-background-color: -surface; }
-.connection-list .list-cell.connected,
-.connection-list .list-cell.connected:filled:selected,
-.connection-list .list-cell.connected:filled:hover { -fx-background-color: -tint; }
 
 .connection-list .check-box .box { -fx-background-color: -surface; -fx-background-radius: 4px;
     -fx-border-color: -border; -fx-border-radius: 4px; -fx-padding: 3px; }
 .connection-list .check-box:selected .box  { -fx-background-color: -accent; -fx-border-color: -accent; }
 .connection-list .check-box:selected .mark { -fx-background-color: white; }
 
-/* Scoped so they don't override the directory .row-name / .row-phone */
-.connection-list .row-name  { -fx-font-size: 13px; -fx-font-weight: 500; }
-.connection-list .row-phone { -fx-font-size: 12px; }
-.row-status    { -fx-font-size: 11px; -fx-pref-width: 78px; -fx-min-width: 78px; }
-.status-direct { -fx-text-fill: -accent; }
-.status-via    { -fx-text-fill: -muted; }
+/* Rows built by ConnectionCheckCell */
+.connection-row { -fx-padding: 8 0 8 0; }
+.connection-avatar { -fx-background-color: -tint; -fx-background-radius: 100px;
+    -fx-min-width: 32px; -fx-pref-width: 32px; -fx-max-width: 32px;
+    -fx-min-height: 32px; -fx-pref-height: 32px; -fx-max-height: 32px; }
+.connection-avatar-label { -fx-text-fill: -accent; -fx-font-size: 12px; -fx-font-weight: 600; }
+.connection-name { -fx-text-fill: -text; -fx-font-size: 13px; -fx-font-weight: 500; }
 
-.preview-name { -fx-text-fill: -text;  -fx-font-size: 12px; -fx-font-weight: 600; }
-.preview-role { -fx-text-fill: -muted; -fx-font-size: 11px; }
 .preview-box  { -fx-background-color: -surface-alt; -fx-background-radius: 8; -fx-padding: 16px; }
 
 /* =====================================================================
    CONNECTION FINDER
    ===================================================================== */
-.finder-title    { -fx-text-fill: -text;  -fx-font-size: 30px; -fx-font-weight: 400; }
-.finder-subtitle { -fx-text-fill: -muted; -fx-font-size: 14px; }
-
 .contact-combo { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8;
     -fx-padding: 0 4 0 4; -fx-cursor: hand; }
 .contact-combo:focused { -fx-border-color: -accent; }
@@ -389,7 +372,7 @@
 .zoom-box   { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8; }
 .graph-footer { -fx-border-color: -border transparent transparent transparent; -fx-border-width: 1 0 0 0; }
 .legend-line  { -fx-background-color: -accent; -fx-background-radius: 2; }
-.path-summary { -fx-text-fill: -text; -fx-font-size: 12px; -fx-font-weight: 500; }
+.path-summary { -fx-text-fill: -text; -fx-font-size: 12px; -fx-font-weight: 500; -fx-text-alignment: right; }
 
 .node-ring { -fx-background-color: -surface; -fx-background-radius: 100px; -fx-border-radius: 100px;
     -fx-effect: dropshadow(gaussian, rgba(18,37,64,0.06), 16, 0, 0, 4); -fx-cursor: hand; }
@@ -449,30 +432,8 @@
 .nav-item.active .svg-icon { -fx-fill: white; }
 
 /* =====================================================================
-   NEW: TOASTS, BADGES, TOOLTIPS, MENUS, DIALOGS
+   TOOLTIPS, MENUS, DIALOGS
    ===================================================================== */
-/* Toast / inline banner — add "toast-success", "toast-error" or "toast-info" */
-.toast { -fx-background-radius: 10; -fx-border-radius: 10; -fx-border-width: 1; -fx-padding: 12 16 12 16;
-    -fx-effect: dropshadow(gaussian, rgba(18,37,64,0.12), 18, 0, 0, 6); }
-.toast-text    { -fx-font-size: 13px; -fx-font-weight: 500; }
-.toast-success { -fx-background-color: -success-bg; -fx-border-color: -success; }
-.toast-success .toast-text { -fx-text-fill: -success; }
-.toast-error   { -fx-background-color: -danger-bg; -fx-border-color: -danger; }
-.toast-error .toast-text { -fx-text-fill: -danger; }
-.toast-info    { -fx-background-color: -tint; -fx-border-color: -accent-line; }
-.toast-info .toast-text { -fx-text-fill: -accent; }
-
-/* Badges */
-.badge { -fx-background-radius: 100px; -fx-padding: 2 8 2 8; -fx-font-size: 10px; -fx-font-weight: 600; }
-.badge-blue   { -fx-background-color: -tint;       -fx-text-fill: -accent; }
-.badge-green  { -fx-background-color: -success-bg; -fx-text-fill: -success; }
-.badge-red    { -fx-background-color: -danger-bg;  -fx-text-fill: -danger; }
-
-/* Empty state */
-.empty-state-title { -fx-text-fill: -text;  -fx-font-size: 15px; -fx-font-weight: 600; }
-.empty-state-desc  { -fx-text-fill: -muted; -fx-font-size: 13px; -fx-line-spacing: 3px; }
-
-/* Tooltip */
 .tooltip { -fx-background-color: -text; -fx-text-fill: -surface; -fx-font-size: 11px;
     -fx-background-radius: 6; -fx-padding: 6 10 6 10; -fx-background-insets: 0; }
 
@@ -486,8 +447,8 @@
 .context-menu .menu-item.danger:focused { -fx-background-color: -danger-bg; }
 .context-menu .menu-item.danger .label { -fx-text-fill: -danger-strong; }
 
-/* Dialogs / alerts (e.g. delete confirmation) */
-.dialog-pane { -fx-background-color: -surface; -fx-font-family: "Inter", "Segoe UI", "System"; }
+/* Dialogs / alerts. Needs the stylesheet added to the dialog pane in code (see style(Alert)). */
+.dialog-pane { -fx-background-color: -surface; }
 .dialog-pane > .content.label { -fx-text-fill: -text; -fx-font-size: 13px; }
 .dialog-pane .header-panel { -fx-background-color: -surface-alt; }
 .dialog-pane .header-panel .label { -fx-text-fill: -text; -fx-font-weight: 600; }

@@ -24,7 +24,7 @@ public class ConnectionDAO {
             return false; // duplicate — do nothing
         }
 
-        String sql = "INSERT INTO connections (contact_id_1, contact_id_2) VALUES (?, ?)";
+        String sql = "INSERT OR IGNORE INTO connections (contact_id_1, contact_id_2) VALUES (?, ?)";
         java.sql.Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
