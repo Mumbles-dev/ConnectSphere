@@ -33,10 +33,14 @@ public final class SettingsManager {
     /** {@code true} / {@code false} — whether the Recently Added section is shown. */
     public static final String KEY_SHOW_RECENT    = "show.recent";
 
+    /** {@code true} / {@code false} — whether dark mode is enabled. */
+    public static final String KEY_DARK_MODE      = "ui.dark.mode";
+
     // ── Default values ────────────────────────────────────────────────────
     public static final String DEFAULT_FORMAT         = "PHONE";
     public static final String DEFAULT_SHOW_FAVORITES = "true";
     public static final String DEFAULT_SHOW_RECENT    = "true";
+    public static final String DEFAULT_DARK_MODE      = "false";
 
     private SettingsManager() { /* utility class — no instances */ }
 
@@ -70,7 +74,7 @@ public final class SettingsManager {
     }
 
     /**
-     * Persists the three mutable settings to {@code data/settings.properties}.
+     * Persists the four mutable settings to {@code data/settings.properties}.
      * Creates the {@code data/} directory if it does not exist.
      * Failures are logged to stderr but never thrown — a settings-write
      * failure must never crash the application.
@@ -78,12 +82,14 @@ public final class SettingsManager {
      * @param displayFormat  one of {@code "PHONE"}, {@code "EMAIL"}, {@code "BOTH"}
      * @param showFavorites  whether the Favorites section is visible
      * @param showRecent     whether the Recently Added section is visible
+     * @param darkMode       whether dark mode is active
      */
-    public static void save(String displayFormat, boolean showFavorites, boolean showRecent) {
+    public static void save(String displayFormat, boolean showFavorites, boolean showRecent, boolean darkMode) {
         Properties props = new Properties();
         props.setProperty(KEY_FORMAT,         displayFormat);
         props.setProperty(KEY_SHOW_FAVORITES, String.valueOf(showFavorites));
         props.setProperty(KEY_SHOW_RECENT,    String.valueOf(showRecent));
+        props.setProperty(KEY_DARK_MODE,      String.valueOf(darkMode));
 
         try {
             File folder = new File(SETTINGS_FOLDER);
@@ -103,12 +109,13 @@ public final class SettingsManager {
     // Helpers
     // ──────────────────────────────────────────────────────────────────────
 
-    /** Returns a fresh {@code Properties} pre-loaded with the three default values. */
+    /** Returns a fresh {@code Properties} pre-loaded with the four default values. */
     private static Properties defaults() {
         Properties p = new Properties();
         p.setProperty(KEY_FORMAT,         DEFAULT_FORMAT);
         p.setProperty(KEY_SHOW_FAVORITES, DEFAULT_SHOW_FAVORITES);
         p.setProperty(KEY_SHOW_RECENT,    DEFAULT_SHOW_RECENT);
+        p.setProperty(KEY_DARK_MODE,      DEFAULT_DARK_MODE);
         return p;
     }
 }

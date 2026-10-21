@@ -124,9 +124,25 @@ public class MainController {
     private Set<Integer> formPreviousIds = Collections.emptySet(); // connections before editing
     private final ObservableList<Contact> formCandidateData = FXCollections.observableArrayList();
     private FilteredList<Contact> formCandidates;
+    /** Maps each error Label to its owning TextField for .invalid/.valid border toggling. */
+    private final Map<Label, TextField> errorOwner = new HashMap<>();
     private Image formPhoto;        // in-memory preview image (transient, for display only)
     private String formPhotoPath;   // persisted path under data/photos/ (null = no photo)
     private static final boolean REQUIRE_PHONE = true;            // the form marks only Email as "Optional"
+
+    /** LRU-bounded cache for loaded contact photos; keyed by "path@size" so different display sizes are cached independently. */
+    private final Map<String, Image> photoCache = new LinkedHashMap<>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Image> e) { return size() > 128; }
+    };
+    /** Returns the photo cache key combining path and pixel size. */
+    private static String photoCacheKey(String path, double size) { return path + "@" + (int) size; }
+
+    /** Tracks a photo copied into data/photos/ during the current form session but not yet saved to the DB.
+     *  Reset to null when the form opens; cleaned up on cancel, replace, and remove. */
+    private String sessionUploadedPath;
+
+    /** Current dark-mode state; kept in sync with the toggle and persisted via SettingsManager. */
+    private boolean darkMode = false;
 
     // ═════════════════════════════════════════════════════════════════
     // FXML — shell
@@ -164,12 +180,12 @@ public class MainController {
 
     // FXML — Settings
     @FXML private RadioButton fmtPhone, fmtEmail, fmtBoth;
-    @FXML private ToggleButton favToggle, recentToggle;
-    @FXML private Label favToggleLabel, recentToggleLabel;
+    @FXML private ToggleButton favToggle, recentToggle, darkModeToggle;
+    @FXML private Label favToggleLabel, recentToggleLabel, darkModeToggleLabel;
 
     // FXML — Add / Edit contact page
     @FXML private VBox formPage, addSideCard, editSideCard, previewBox;
-    @FXML private Button backButton, uploadPhotoButton, cancelButton, saveButton;
+    @FXML private Button backButton, uploadPhotoButton, removePhotoButton, cancelButton, saveButton;
     @FXML private Label titleLabel, subtitleLabel, photoInitials, photoHint, photoError;
     @FXML private Label nameError, phoneError, emailError;
     @FXML private Label selectedCountLabel, indirectNoteLabel, footerNoteLabel, summaryLabel;
@@ -182,6 +198,15 @@ public class MainController {
     @FXML private ToggleButton favoriteToggle;
     @FXML private ListView<Contact> contactListView;
     @FXML private HBox favoriteTagBox;
+
+    // FXML — Phase 2 additions
+    @FXML private Button darkModeQuickBtn, deleteContactBtn, clearSearchBtn, formDeleteBtn;
+    @FXML private StackPane darkModeQuickIcon;
+    @FXML private HBox toastBar;
+    @FXML private Label toastLabel;
+
+    /** Running toast timer; cancelled if a new toast arrives before the old one hides. */
+    private Timeline toastTimer;
 
     // ═════════════════════════════════════════════════════════════════
     // INIT
@@ -207,9 +232,18 @@ public class MainController {
         // and before reloadAllFromDatabase() so the first render uses the right format.
         loadPersistedSettings();
 
+        // Dark mode: the scene is null during initialize(), so we defer application
+        // until the root is attached to a scene.
+        root.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) applyDarkMode(darkMode);
+        });
+
         // Live search over the shared in-memory cache.
         searchField.textProperty().addListener((o, a, b) -> {
             query = b == null ? "" : b.trim().toLowerCase();
+            boolean hasText = query.length() > 0;
+            clearSearchBtn.setVisible(hasText);
+            clearSearchBtn.setManaged(hasText);
             applyListVisibility();
             renderDirectory();
         });
@@ -229,9 +263,14 @@ public class MainController {
             cb.setItems(allContactsData);
             cb.setCellFactory(v -> contactCell(false));
             cb.setButtonCell(contactCell(true));
-            graphPane.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
-            pathList.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
         }
+        // Hover listeners registered once (were incorrectly inside the combo loop — registered twice)
+        graphPane.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
+        pathList.hoverProperty().addListener((o, a, b) -> updateCyclerPause());
+        // Via-contact tooltip installed once here; renderResultCard() only updates the text
+        Tooltip viaTip = new Tooltip("The contact(s) the shortest path passes through to connect the two people.");
+        Tooltip.install(statMutual, viaTip);
+        Tooltip.install(statMutualLabel, viaTip);
         // "Find connection" stays disabled until both contacts are chosen.
         findBtn.disableProperty().bind(fromCombo.valueProperty().isNull().or(toCombo.valueProperty().isNull()));
 
@@ -381,6 +420,7 @@ public class MainController {
             return;
         }
         refreshAll();
+        showToast(next ? "Added to favorites" : "Removed from favorites");
     }
 
     /**
@@ -414,6 +454,11 @@ public class MainController {
         emailField.textProperty().addListener((o, a, b) -> hideFieldError(emailError));
 
         for (Label l : List.of(nameError, phoneError, emailError, photoError)) show(l, false);
+
+        // Map error labels to their owning TextFields for .invalid/.valid CSS toggling
+        errorOwner.put(nameError,  nameField);
+        errorOwner.put(phoneError, phoneField);
+        errorOwner.put(emailError, emailField);
     }
 
     /** Pass null to add a new contact, or an existing Contact to edit it. */
@@ -443,6 +488,7 @@ public class MainController {
         // Reset photo state, then restore the saved photo when editing an existing contact.
         formPhoto = null;
         formPhotoPath = null;
+        sessionUploadedPath = null;  // any prior session upload was already handled
         photoView.setImage(null);
         photoHint.setText("JPG or PNG, up to 2 MB");
         if (editing && existing.getPhotoPath() != null) {
@@ -453,6 +499,7 @@ public class MainController {
                     formPhoto = img;
                     formPhotoPath = existing.getPhotoPath();
                     photoView.setImage(img);
+                    show(removePhotoButton, true);
                 }
             }
         }
@@ -471,13 +518,30 @@ public class MainController {
         show(editSideCard, editing);
         if (editing) {
             sideAvatarInitials.setText(initialsOf(existing.getName()));
-            sideAvatarView.setVisible(false);
+            // Show existing photo in the edit-side card if available
+            boolean sideHasPhoto = false;
+            if (existing.getPhotoPath() != null) {
+                File _sf = new File(existing.getPhotoPath());
+                if (_sf.exists()) {
+                    Image _si = new Image(_sf.toURI().toString(), 48, 48, true, true);
+                    if (!_si.isError()) {
+                        sideAvatarView.setImage(_si);
+                        Circle _sc = new Circle(24, 24, 24);
+                        sideAvatarView.setClip(_sc);
+                        sideHasPhoto = true;
+                    }
+                }
+            }
+            sideAvatarView.setVisible(sideHasPhoto);
+            sideAvatarInitials.setVisible(!sideHasPhoto);
             sideNameLabel.setText(existing.getName());
             sidePhoneLabel.setText(dash(existing.getPhone()));
             show(favoriteTagBox, existing.isFavorite());
             addedOnLabel.setText(addedText(existing));
         }
 
+        // Show Delete button only when editing an existing contact
+        show(formDeleteBtn, editing);
         updateFormPreview();
         showPage(formPage);
         nameField.requestFocus();
@@ -485,6 +549,8 @@ public class MainController {
 
     @FXML
     private void onCancelContact() {
+        // Delete any photo uploaded this session that was never saved to the DB
+        if (sessionUploadedPath != null) { safeDeletePhoto(sessionUploadedPath); sessionUploadedPath = null; }
         showPage(contactsPage);
     }
 
@@ -508,6 +574,7 @@ public class MainController {
         try {
             int contactId;
             if (formContact != null) {
+                String oldPhotoPath = formContact.getPhotoPath(); // capture before update
                 formContact.setName(name);
                 formContact.setPhone(phone);
                 formContact.setEmail(email);
@@ -518,6 +585,10 @@ public class MainController {
                     formContact.setFavorite(wantFavorite);
                 }
                 contactId = formContact.getId();
+                // Delete the old photo file if the photo was changed or removed
+                if (oldPhotoPath != null && !oldPhotoPath.equals(formPhotoPath)) {
+                    safeDeletePhoto(oldPhotoPath);
+                }
             } else {
                 Contact saved = contactDAO.addContact(new Contact(name, phone, email, formPhotoPath));
                 contactId = saved.getId();
@@ -527,7 +598,9 @@ public class MainController {
             applyConnectionSelection(contactId, formPreviousIds, new HashSet<>(formSelectedIds));
             selectedId = contactId;
             reloadAllFromDatabase();
+            sessionUploadedPath = null;   // the upload is now owned by the saved contact
             showPage(contactsPage);
+            showToast(formContact != null ? "Contact saved" : "Contact added");
         } catch (RuntimeException e) {
             error("Could not save contact", e.getMessage());
         }
@@ -561,8 +634,23 @@ public class MainController {
         }
 
         hideFieldError(photoError);
+        // Delete any previously uploaded (but not yet saved) session photo
+        if (sessionUploadedPath != null) { safeDeletePhoto(sessionUploadedPath); sessionUploadedPath = null; }
+        sessionUploadedPath = formPhotoPath;  // track the newly uploaded copy
         formPhoto = img;
         photoView.setImage(img);
+        show(removePhotoButton, true);
+        updatePhotoDisplay();
+    }
+
+    /** Removes the current photo, deleting any unsaved session upload from disk. */
+    @FXML
+    private void onRemovePhoto() {
+        if (sessionUploadedPath != null) { safeDeletePhoto(sessionUploadedPath); sessionUploadedPath = null; }
+        formPhoto = null;
+        formPhotoPath = null;
+        photoView.setImage(null);
+        show(removePhotoButton, false);
         updatePhotoDisplay();
     }
 
@@ -626,31 +714,33 @@ public class MainController {
         return row;
     }
 
-    private void fieldError(Label l, String msg) { l.setText(msg); show(l, true); }
-    private void hideFieldError(Label l)         { show(l, false); }
+    private void fieldError(Label l, String msg) {
+        l.setText(msg); show(l, true);
+        TextField f = errorOwner.get(l);
+        if (f != null) { f.getStyleClass().remove("valid"); if (!f.getStyleClass().contains("invalid")) f.getStyleClass().add("invalid"); }
+    }
+    private void hideFieldError(Label l) {
+        show(l, false);
+        TextField f = errorOwner.get(l);
+        if (f != null) { f.getStyleClass().remove("invalid"); f.getStyleClass().remove("valid"); }
+    }
     private String trimmed(TextField f)          { return f.getText() == null ? "" : f.getText().trim(); }
     private String nullToEmpty(String s)         { return s == null ? "" : s; }
 
-    /** One row in the connections picker: checkbox + avatar + name. Click anywhere on the row to toggle. */
+    /** One row in the connections picker: checkbox + avatar + name. Click anywhere on the row to toggle.
+     *  Uses avatar() for photo support with initials fallback. */
     private class ConnectionCheckCell extends ListCell<Contact> {
         private final CheckBox checkBox = new CheckBox();
-        private final Label avatarLabel = new Label();
-        private final Label nameLabel = new Label();
-        private final HBox row = new HBox(10);
+        private final Label nameLabel   = new Label();
+        private final HBox  row         = new HBox(10);
 
         ConnectionCheckCell() {
-            avatarLabel.getStyleClass().add("connection-avatar-label");
             nameLabel.getStyleClass().add("connection-name");
-            StackPane avatarStack = new StackPane(avatarLabel);
-            avatarStack.getStyleClass().add("connection-avatar");
-
-            row.getChildren().setAll(checkBox, avatarStack, nameLabel);
+            HBox.setHgrow(nameLabel, Priority.ALWAYS);
             row.setAlignment(Pos.CENTER_LEFT);
             row.getStyleClass().add("connection-row");
             row.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(nameLabel, Priority.ALWAYS);
-
-            // the row handles every click, so the checkbox never double-toggles
+            // the row handles every click so the checkbox never double-toggles
             checkBox.setMouseTransparent(true);
             row.setOnMouseClicked(e -> {
                 Contact c = getItem();
@@ -667,8 +757,10 @@ public class MainController {
             super.updateItem(c, empty);
             if (empty || c == null) { setGraphic(null); return; }
             nameLabel.setText(c.getName());
-            avatarLabel.setText(initialsOf(c.getName()));
             checkBox.setSelected(formSelectedIds.contains(c.getId()));
+            // avatar() returns a photo circle or initials circle — reuse existing helper
+            StackPane av = avatar(c, 32, 12, false);
+            row.getChildren().setAll(checkBox, av, nameLabel);
             setGraphic(row);
         }
     }
@@ -686,9 +778,12 @@ public class MainController {
                 "Delete " + contact.getName() + "? This also removes any connections involving them.", "Delete"))
             return;
         try {
+            String photoPath = contact.getPhotoPath();  // capture before DB delete
             contactDAO.deleteContact(contact.getId());
+            safeDeletePhoto(photoPath);                 // delete after successful DB operation
             if (selectedId == contact.getId()) selectedId = -1;
             reloadAllFromDatabase();
+            showToast("Contact deleted");
         } catch (RuntimeException e) {
             error("Could not delete contact", e.getMessage());
         }
@@ -787,6 +882,22 @@ public class MainController {
                 .sorted(byName(sortAscending))
                 .collect(Collectors.toList());
 
+        if (view.isEmpty()) {
+            Label empty = styled(
+                    query.isEmpty()
+                            ? (favoritesOnly ? "No favorite contacts yet. Star a contact to add them."
+                               : "No contacts yet. Click \"Add contact\" to get started.")
+                            : "No contacts match \"" + query + "\".",
+                    "empty-text");
+            empty.setWrapText(true);
+            empty.setPadding(new Insets(24, 20, 24, 20));
+            directoryList.getChildren().add(empty);
+            footerCount.setText(!favoritesOnly && query.isEmpty()
+                    ? "Showing all 0 contacts"
+                    : "Showing 0 of " + allContactsData.size() + " contacts");
+            return;
+        }
+
         for (Contact c : view) {
             VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(subtitle(c), "row-phone"));
             if (c.isFavorite()) text.getChildren().add(iconLabel("star-fill", 10, "ic-blue", "Favorite", "dir-fav-tag"));
@@ -799,10 +910,22 @@ public class MainController {
             added.setStyle("-fx-font-size: 11px;");
             added.setPrefWidth(100); added.setMinWidth(100);
 
+            // Star toggle (Phase 2): click toggles favorite without selecting/opening the row
+            StackPane starIcon = icon(c.isFavorite() ? "star-fill" : "star", 16,
+                    c.isFavorite() ? "ic-blue" : "ic-soft");
+            Button starBtn = new Button();
+            starBtn.setGraphic(starIcon);
+            starBtn.getStyleClass().add("dir-star-btn");
+            starBtn.setFocusTraversable(false);
+            Tooltip.install(starBtn,
+                    new Tooltip(c.isFavorite() ? "Remove from favorites" : "Add to favorites"));
+            starBtn.setOnAction(e -> { e.consume(); toggleFavorite(c); });
+
             boolean isSel = c.getId() == selectedId;
-            HBox row = new HBox(identity, added, icon("caret-right", 16, isSel ? "ic-blue" : "ic-soft"));
+            HBox row = new HBox(identity, added, starBtn,
+                    icon("caret-right", 16, isSel ? "ic-blue" : "ic-soft"));
             row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(0, 20, 0, 20));
+            row.setPadding(new Insets(0, 12, 0, 20));
             row.setMinHeight(c.isFavorite() ? 62 : 52);
             row.setPrefHeight(c.isFavorite() ? 62 : 52);
             row.getStyleClass().add("dir-row");
@@ -1007,8 +1130,12 @@ public class MainController {
                   + (routeCount > 1 ? " (" + plural(routeCount, "equally short route") + ")." : "."));
         statDistance.setText(String.valueOf(dist));
         statDistanceLabel.setText(dist == 1 ? "Connection" : "Connections");
-        statMutual.setText(String.valueOf(mutualNames.size()));
-        statMutualLabel.setText(mutualNames.size() == 1 ? "Mutual contact" : "Mutual contacts");
+        // statMutual counts the intermediate (via) nodes on the active route, not mutual contacts.
+        // The label is renamed to "Via contact(s)" and a Tooltip explains the meaning.
+        int viaCount = Math.max(0, path.size() - 2);
+        statMutual.setText(String.valueOf(viaCount));
+        statMutualLabel.setText(viaCount == 1 ? "Via contact" : "Via contacts");
+        // Tooltip installed once in setupFinder(); no new install here.
         pathNoteLabel.setText("No direct connection between these contacts.");
 
         renderActiveRoute();
@@ -1020,7 +1147,8 @@ public class MainController {
         gridCanvas.setHeight(h);
         GraphicsContext gc = gridCanvas.getGraphicsContext2D();
         gc.clearRect(0, 0, w, h);
-        gc.setFill(Color.web("#E2E8F1"));
+        // Use the theme's border token colour for the grid dots (light vs dark)
+        gc.setFill(darkMode ? Color.web("#2A3F5F") : Color.web("#E2E8F1"));
         for (double x = 28; x < w; x += 48)
             for (double y = 25; y < h; y += 48) gc.fillOval(x, y, 2, 2);
         renderGraph();
@@ -1105,7 +1233,8 @@ public class MainController {
             double[] p = pos.get(cn.getContactId1()), q = pos.get(cn.getContactId2());
             if (p == null || q == null) continue;
             Line line = new Line(p[0], p[1], q[0], q[1]);
-            line.setStroke(Color.web("#B9D0FB"));
+            // accent-line token: #B9D0FB (light) / #2F5AA8 (dark)
+            line.setStroke(darkMode ? Color.web("#2F5AA8") : Color.web("#B9D0FB"));
             line.setStrokeWidth(2);
             line.setMouseTransparent(true);
             zoomLayer.getChildren().add(line);
@@ -1122,7 +1251,8 @@ public class MainController {
             double startOpacity = routesUsing.contains(activeRoute) ? 1 : 0;
 
             Line hot = new Line(p[0], p[1], q[0], q[1]);
-            hot.setStroke(Color.web("#2563EB"));
+            // accent token: #2563EB (light) / #3B82F6 (dark)
+            hot.setStroke(darkMode ? Color.web("#3B82F6") : Color.web("#2563EB"));
             hot.setStrokeWidth(3);
             hot.setMouseTransparent(true);
             hot.setOpacity(startOpacity);
@@ -1153,7 +1283,7 @@ public class MainController {
             String sub;
             if (pathMode) sub = c.getId() == lastPath.get(0).getId() ? "Starting contact"
                     : end ? "Destination contact"
-                      : mutual ? "Mutual contact"
+                      : mutual ? "Via contact"
                         : mid ? "Intermediate contact" : "Contact";
             else sub = idOf(lastA) == c.getId() ? "Starting contact"
                     : idOf(lastB) == c.getId() ? "Destination contact" : "Contact";
@@ -1176,7 +1306,7 @@ public class MainController {
             boolean end = i == 0 || i == route.size() - 1;
             String sub = i == 0 ? "Starting contact"
                     : end ? "Destination contact"
-                      : lastMutual.contains(c.getId()) ? "Mutual contact" : "Intermediate contact";
+                      : lastMutual.contains(c.getId()) ? "Via contact" : "Intermediate contact";
 
             HBox node = new HBox(12, avatar(c, 36, 14, end),
                     new VBox(4, styled(c.getName(), "path-node-name"), styled(sub, "path-node-sub")));
@@ -1354,6 +1484,13 @@ public class MainController {
         recentToggle.setSelected(showRecent);
         favToggleLabel.setText(showFav    ? "On" : "Off");
         recentToggleLabel.setText(showRecent ? "On" : "Off");
+
+        // ── Dark mode ───────────────────────────────────────────────────
+        darkMode = Boolean.parseBoolean(
+                props.getProperty(SettingsManager.KEY_DARK_MODE, SettingsManager.DEFAULT_DARK_MODE));
+        darkModeToggle.setSelected(darkMode);
+        darkModeToggleLabel.setText(darkMode ? "On" : "Off");
+        // Actual application deferred to scene listener in initialize() since scene may be null here.
     }
 
     /** Radio cards + both switches land here. */
@@ -1368,7 +1505,35 @@ public class MainController {
         renderDirectory();
         renderDetails();
         // Persist changes so they survive app restarts.
-        SettingsManager.save(displayFormat.name(), favToggle.isSelected(), recentToggle.isSelected());
+        SettingsManager.save(displayFormat.name(), favToggle.isSelected(), recentToggle.isSelected(), darkMode);
+    }
+
+    /** Dark-mode switch handler; toggling it applies the CSS class and saves immediately. */
+    @FXML
+    private void onDarkModeChanged() {
+        darkMode = darkModeToggle.isSelected();
+        darkModeToggleLabel.setText(darkMode ? "On" : "Off");
+        applyDarkMode(darkMode);
+        SettingsManager.save(displayFormat.name(), favToggle.isSelected(), recentToggle.isSelected(), darkMode);
+    }
+
+    /**
+     * Adds or removes the {@code "dark"} style class on the scene root so that all
+     * CSS theme tokens switch to the dark palette defined in Main.css.
+     * Also redraws the graph grid canvas with the correct grid-dot colour.
+     */
+    private void applyDarkMode(boolean dark) {
+        if (root.getScene() == null) return;
+        javafx.scene.Parent sceneRoot = root.getScene().getRoot();
+        if (dark) {
+            if (!sceneRoot.getStyleClass().contains("dark")) sceneRoot.getStyleClass().add("dark");
+        } else {
+            sceneRoot.getStyleClass().remove("dark");
+        }
+        // Sync the quick-toggle icon: show sun when dark (click → go light), moon when light (click → go dark)
+        fillIconHolder(darkModeQuickIcon, dark ? "sun" : "moon", 18);
+        // Redraw the grid canvas so its dot colour matches the new theme
+        onGraphResized();
     }
 
     @FXML
@@ -1379,6 +1544,7 @@ public class MainController {
         if (f == null) return;
         try {
             Files.write(f.toPath(), buildBackup(), StandardCharsets.UTF_8);
+            showToast("Backup saved \u2014 " + plural(allContactsData.size(), "contact") + " exported");
             info("Backup saved", "Saved " + plural(allContactsData.size(), "contact") + " and "
                     + plural(connectionCount(), "connection") + " to:\n" + f.getAbsolutePath());
         } catch (IOException e) {
@@ -1394,6 +1560,7 @@ public class MainController {
             return;
         try {
             restoreFrom(Files.readAllLines(f.toPath(), StandardCharsets.UTF_8));
+            showToast("Data restored \u2014 " + plural(allContactsData.size(), "contact") + " loaded");
             info("Restore complete", "Loaded " + plural(allContactsData.size(), "contact") + " and "
                     + plural(connectionCount(), "connection") + ".");
         } catch (Exception e) {
@@ -1406,8 +1573,16 @@ public class MainController {
         if (!confirm("Clear all data", "This permanently removes all contacts and connections and cannot be undone.", "Clear all data"))
             return;
         try {
+            // Collect photo paths before wiping the DB
+            List<String> photoPaths = allContactsData.stream()
+                    .map(Contact::getPhotoPath)
+                    .filter(p -> p != null && !p.isBlank())
+                    .collect(Collectors.toList());
             contactDAO.deleteAllContacts(); // cascades to connections
             selectedId = -1;
+            // Delete photo files only after the DB clear succeeded
+            photoPaths.forEach(this::safeDeletePhoto);
+            photoCache.clear();
             reloadAllFromDatabase();
         } catch (RuntimeException e) {
             error("Could not clear data", e.getMessage());
@@ -1479,6 +1654,25 @@ public class MainController {
         return fc;
     }
 
+    /**
+     * Deletes a photo file from {@code data/photos/} after verifying it lives inside that
+     * directory.  Missing files are silently ignored.  Never deletes anything outside the
+     * managed photos folder, so a malformed path cannot cause harm.
+     */
+    private void safeDeletePhoto(String path) {
+        if (path == null || path.isBlank()) return;
+        try {
+            File photosDir = new File(PHOTOS_FOLDER).getCanonicalFile();
+            File target    = new File(path).getCanonicalFile();
+            if (!target.getPath().startsWith(photosDir.getPath() + File.separator)
+                    && !target.equals(photosDir)) return; // outside managed folder — refuse
+            photoCache.keySet().removeIf(k -> k.startsWith(path + "@"));  // cache keys are "path@size"
+            target.delete();          // no-op if missing
+        } catch (IOException ex) {
+            System.err.println("[safeDeletePhoto] Could not delete " + path + ": " + ex.getMessage());
+        }
+    }
+
     private static String enc(String v) { return URLEncoder.encode(v == null ? "" : v, StandardCharsets.UTF_8); }
     private static String dec(String v) { return URLDecoder.decode(v, StandardCharsets.UTF_8); }
 
@@ -1530,6 +1724,31 @@ public class MainController {
     // UI UTILS
     // ═════════════════════════════════════════════════════════════════
     private StackPane avatar(Contact c, double size, double fontSize, boolean filled) {
+        // Try to show the contact's photo first
+        String photoPath = c.getPhotoPath();
+        if (photoPath != null && !photoPath.isBlank()) {
+            String cacheKey = photoCacheKey(photoPath, size);
+            Image img = photoCache.computeIfAbsent(cacheKey, k -> {
+                try {
+                    File f = new File(photoPath);
+                    if (!f.exists()) return null;
+                    Image loaded = new Image(f.toURI().toString(), size, size, true, true);
+                    return loaded.isError() ? null : loaded;
+                } catch (Exception ex) { return null; }
+            });
+            if (img != null) {
+                ImageView iv = new ImageView(img);
+                iv.setFitWidth(size); iv.setFitHeight(size); iv.setPreserveRatio(false);
+                Circle clip = new Circle(size / 2, size / 2, size / 2);
+                iv.setClip(clip);
+                StackPane p = new StackPane(iv);
+                p.setMinSize(size, size); p.setPrefSize(size, size); p.setMaxSize(size, size);
+                return p;
+            }
+            // If the image failed to load, evict the stale cache entry so the initials fallback shows
+            photoCache.remove(cacheKey);
+        }
+        // Fallback: initials circle
         Label l = new Label(initialsOf(c.getName()));
         l.getStyleClass().add(filled ? "avatar-text-filled" : "avatar-text-light");
         l.setStyle("-fx-font-size: " + fontSize + "px;");
@@ -1594,22 +1813,106 @@ public class MainController {
 
     private String plural(long n, String word) { return n + " " + word + (n == 1 ? "" : "s"); }
 
+    // ═════════════════════════════════════════════════════════════════
+    // PHASE 2 — new action handlers
+    // ═════════════════════════════════════════════════════════════════
+
+    /** Quick sun/moon toggle in the top bar — mirrors the Settings switch. */
+    @FXML
+    private void onDarkModeQuickToggle() {
+        darkMode = !darkMode;
+        darkModeToggle.setSelected(darkMode);
+        darkModeToggleLabel.setText(darkMode ? "On" : "Off");
+        applyDarkMode(darkMode);
+        SettingsManager.save(displayFormat.name(), favToggle.isSelected(), recentToggle.isSelected(), darkMode);
+    }
+
+    /** Delete button in the detail panel — delegates to the shared confirm+delete flow. */
+    @FXML
+    private void onDeleteFromDetail() {
+        Contact c = selected();
+        if (c != null) confirmAndDeleteContact(c);
+    }
+
+    /** Delete button in the Add/Edit form footer — only visible in edit mode. */
+    @FXML
+    private void onDeleteFromForm() {
+        if (formContact == null) return;
+        int id = formContact.getId();
+        confirmAndDeleteContact(formContact);
+        if (!contactsById.containsKey(id)) {          // only if the delete actually happened
+            if (sessionUploadedPath != null) { safeDeletePhoto(sessionUploadedPath); sessionUploadedPath = null; }
+            showPage(contactsPage);
+        }
+    }
+
+    /** Clear (×) button in the search box. */
+    @FXML
+    private void onClearSearch() {
+        searchField.clear();
+        searchField.requestFocus();
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // TOAST
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Shows a non-blocking success toast at the bottom of pageStack.
+     * If another toast is already visible it is replaced immediately.
+     * Auto-hides after 2.5 s using a fade-out of 300 ms.
+     */
+    private void showToast(String message) {
+        toastLabel.setText(message);
+        if (toastTimer != null) toastTimer.stop();
+
+        // Make visible and opaque before the fade-in
+        toastBar.setVisible(true);
+        toastBar.setManaged(false); // overlay — must not affect layout
+        toastBar.setOpacity(1.0);
+
+        // Auto-hide: after 2.2 s wait, fade out over 300 ms, then hide
+        FadeTransition fadeOut = new FadeTransition(Duration.millis(300), toastBar);
+        fadeOut.setToValue(0);
+        fadeOut.setOnFinished(e -> { toastBar.setVisible(false); toastBar.setOpacity(1); });
+
+        toastTimer = new Timeline(new KeyFrame(Duration.millis(2200), e -> fadeOut.play()));
+        toastTimer.play();
+    }
+
     // dialogs
+
+    /**
+     * Applies Main.css to a dialog pane and mirrors the current dark-mode state
+     * so alerts match the app theme in both light and dark mode.
+     */
+    private void styleAlert(Alert a) {
+        DialogPane dp = a.getDialogPane();
+        String css = getClass().getResource("/com/connectsphere/stylesheets/Main.css").toExternalForm();
+        dp.getStylesheets().add(css);
+        if (darkMode) dp.getStyleClass().add("dark");
+    }
+
     private boolean confirm(String title, String msg, String action) {
         ButtonType yes = new ButtonType(action, ButtonBar.ButtonData.OK_DONE);
         Alert a = new Alert(Alert.AlertType.CONFIRMATION, msg, yes, ButtonType.CANCEL);
         a.setTitle(title);
         a.setHeaderText(null);
+        styleAlert(a);
         return a.showAndWait().filter(b -> b == yes).isPresent();
     }
 
     private void info(String title, String msg) {
         Alert a = new Alert(Alert.AlertType.INFORMATION, msg, ButtonType.OK);
-        a.setTitle(title); a.setHeaderText(title); a.showAndWait();
+        a.setTitle(title); a.setHeaderText(title);
+        styleAlert(a);
+        a.showAndWait();
     }
 
     private void error(String title, String msg) {
         Alert a = new Alert(Alert.AlertType.ERROR, msg == null ? "An unexpected error occurred." : msg, ButtonType.OK);
-        a.setHeaderText(title); a.showAndWait();
+        a.setHeaderText(title);
+        styleAlert(a);
+        a.showAndWait();
     }
 }

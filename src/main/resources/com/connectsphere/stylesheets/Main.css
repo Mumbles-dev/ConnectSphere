@@ -73,7 +73,7 @@
     -fx-border-color: transparent; -fx-border-radius: 8; -fx-border-width: 1; }
 .nav-item:hover { -fx-background-color: rgba(255,255,255,0.05); }
 /* keyboard focus only — a mouse click no longer leaves an outline behind */
-.nav-item:focused{ -fx-border-color: -accent; }
+.nav-item:focus{ -fx-border-color: -accent; }
 .nav-item .nav-text { -fx-text-fill: -nav-text; -fx-font-size: 13px; -fx-font-weight: 400; }
 .nav-item .nav-count { -fx-text-fill: -nav-text; -fx-font-size: 12px; }
 .nav-item.active { -fx-background-color: -sidebar-card; }
@@ -142,7 +142,7 @@
 }
 .btn-primary { -fx-padding: 0 16 0 16; }
 .btn-primary:hover, .primary-button:hover { -fx-background-color: -accent-hover; -fx-border-color: -accent-hover; }
-.btn-primary:pressed, .primary-button:pressed { -fx-background-color: -accent-hover; -fx-scale-y: 0.98; }
+.btn-primary:-moz-suppressed, .primary-button:-moz-suppressed { -fx-background-color: -accent-hover; -fx-scale-y: 0.98; }
 
 .btn-outline, .secondary-button {
     -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 1; -fx-text-fill: -text;
@@ -150,7 +150,7 @@
     -fx-background-radius: 8; -fx-border-radius: 8; -fx-cursor: hand;
 }
 .btn-outline:hover, .secondary-button:hover { -fx-background-color: -surface-alt; }
-.btn-outline:pressed, .secondary-button:pressed { -fx-background-color: -tint; }
+.btn-outline:-moz-suppressed, .secondary-button:-moz-suppressed { -fx-background-color: -tint; }
 
 .secondary-button, .primary-button { -fx-pref-height: 40px; -fx-padding: 0 16px 0 16px; }
 
@@ -170,8 +170,8 @@
 .btn-outline .btn-label { -fx-text-fill: -text; }
 
 /* Accessibility: visible keyboard focus (not after mouse clicks) + disabled state */
-.btn-primary:focused, .btn-outline:focused, .primary-button:focused,
-.secondary-button:focused, .btn-outline-blue:focused, .btn-outline-danger:focused{
+.btn-primary:focus, .btn-outline:focus, .primary-button:focus,
+.secondary-button:focus, .btn-outline-blue:focus, .btn-outline-danger:focus{
     -fx-border-color: -accent;
     -fx-effect: dropshadow(gaussian, -accent-line, 6, 0.8, 0, 0);
 }
@@ -244,9 +244,9 @@
    ===================================================================== */
 .search-box { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8; }
 /* the TextField inside owns focus, so react to focus anywhere within the box */
-.search-box:focused { -fx-border-color: -accent; }
+.search-box:focus { -fx-border-color: -accent; }
 /* Search field that sits inside .search-box (transparent) */
-.search-field, .search-field:focused {
+.search-field, .search-field:focus {
     -fx-background-color: transparent; -fx-background-insets: 0;
     -fx-faint-focus-color: transparent; -fx-focus-color: transparent;
     -fx-font-size: 13px; -fx-text-fill: -text; -fx-prompt-text-fill: -soft; -fx-padding: 0;
@@ -292,7 +292,7 @@
     -fx-font-size: 13px; -fx-text-fill: -text; -fx-prompt-text-fill: -soft;
     -fx-faint-focus-color: transparent; -fx-focus-color: transparent;
 }
-.field:focused  { -fx-border-color: -accent; }
+.field:focus  { -fx-border-color: -accent; }
 .field.invalid  { -fx-border-color: -danger; }
 .field.valid    { -fx-border-color: -success; }
 .field:disabled { -fx-opacity: 0.6; -fx-background-color: -surface-alt; }
@@ -309,7 +309,7 @@
     -fx-cursor: hand; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;
 }
 .switch:selected { -fx-background-color: -accent; -fx-alignment: CENTER_RIGHT; }
-.switch:focused  { -fx-background-insets: 0; }
+.switch:focus  { -fx-background-insets: 0; }
 .switch-thumb    { -fx-background-color: white; -fx-background-radius: 100px; }
 .switch-text     { -fx-text-fill: -muted; -fx-font-size: 12px; }
 
@@ -341,7 +341,7 @@
    ===================================================================== */
 .contact-combo { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8;
     -fx-padding: 0 4 0 4; -fx-cursor: hand; }
-.contact-combo:focused { -fx-border-color: -accent; }
+.contact-combo:focus { -fx-border-color: -accent; }
 .contact-combo .arrow-button { -fx-background-color: transparent; }
 .contact-combo .arrow { -fx-background-color: -muted; }
 .contact-combo .list-cell { -fx-background-color: transparent; -fx-padding: 0 4 0 4; }
@@ -408,7 +408,7 @@
 .format-option .radio .dot { -fx-background-color: transparent; -fx-background-radius: 100px; -fx-padding: 4; }
 .format-option:selected .radio { -fx-border-color: -accent; -fx-border-width: 2; }
 .format-option:selected .radio .dot { -fx-background-color: -accent; }
-.format-option:focused { -fx-background-insets: 0; }
+.format-option:focus { -fx-background-insets: 0; }
 
 /* Icon tiles: .icon-tile = 8px radius (settings), .icon-tile-lg = 12px radius (forms) */
 .icon-tile       { -fx-background-color: -tint;    -fx-background-radius: 8; }
@@ -442,9 +442,9 @@
     -fx-padding: 4; -fx-effect: dropshadow(gaussian, rgba(18,37,64,0.12), 16, 0, 0, 4); }
 .context-menu .menu-item { -fx-background-radius: 6; -fx-padding: 8 12 8 12; }
 .context-menu .menu-item .label { -fx-text-fill: -text; -fx-font-size: 13px; }
-.context-menu .menu-item:focused { -fx-background-color: -tint; }
-.context-menu .menu-item:focused .label { -fx-text-fill: -accent; }
-.context-menu .menu-item.danger:focused { -fx-background-color: -danger-bg; }
+.context-menu .menu-item:focus { -fx-background-color: -tint; }
+.context-menu .menu-item:focus .label { -fx-text-fill: -accent; }
+.context-menu .menu-item.danger:focus { -fx-background-color: -danger-bg; }
 .context-menu .menu-item.danger .label { -fx-text-fill: -danger-strong; }
 
 /* Dialogs / alerts. Needs the stylesheet added to the dialog pane in code (see style(Alert)). */
@@ -452,3 +452,58 @@
 .dialog-pane > .content.label { -fx-text-fill: -text; -fx-font-size: 13px; }
 .dialog-pane .header-panel { -fx-background-color: -surface-alt; }
 .dialog-pane .header-panel .label { -fx-text-fill: -text; -fx-font-weight: 600; }
+
+
+/* =====================================================================
+   TOAST NOTIFICATION
+   Small pill overlay pinned to BOTTOM_CENTER of pageStack.
+   Intentionally uses explicit colour values (not theme tokens) so the
+   pill is always high-contrast in both light and dark themes.
+   ===================================================================== */
+.toast-bar {
+    -fx-background-color: #152B49;
+    -fx-background-radius: 100px;
+    -fx-border-color: rgba(255,255,255,0.08);
+    -fx-border-radius: 100px;
+    -fx-border-width: 1;
+    -fx-padding: 10 20 10 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.28), 16, 0, 0, 4);
+}
+/* In dark mode the pill inverts: light pill on dark background */
+.root.dark .toast-bar {
+    -fx-background-color: #E6EDF7;
+    -fx-border-color: rgba(0,0,0,0.06);
+}
+.toast-text {
+    -fx-text-fill: white;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+}
+.root.dark .toast-text {
+    -fx-text-fill: #152B49;
+}
+/* Check-circle icon inside the toast */
+.toast-bar .svg-icon {
+    -fx-fill: #3B82F6;
+}
+.root.dark .toast-bar .svg-icon {
+    -fx-fill: #2563EB;
+}
+
+/* =====================================================================
+   DIRECTORY ROW — star toggle button
+   Sits at the trailing edge of every dir-row; same icon-btn chrome but
+   sized down to 28px to stay inside the 52/62px row height.
+   ===================================================================== */
+.dir-star-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-padding: 4;
+    -fx-cursor: hand;
+    -fx-min-width: 28px;
+    -fx-pref-width: 28px;
+    -fx-min-height: 28px;
+    -fx-pref-height: 28px;
+}
+.dir-star-btn:hover { -fx-background-color: -tint; }
+.dir-star-btn:focus { -fx-border-color: -accent; -fx-border-radius: 6; -fx-border-width: 1; }
