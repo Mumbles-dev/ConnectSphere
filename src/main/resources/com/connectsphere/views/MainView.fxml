@@ -288,26 +288,15 @@
                                 </HBox>
 
                                 <!-- Edit + Archive side by side -->
-                                <HBox spacing="8">
-                                    <Button fx:id="editContactBtn" onAction="#onEditContact"
-                                            styleClass="btn-outline" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="38">
-                                        <graphic>
-                                            <HBox alignment="CENTER" spacing="8">
-                                                <StackPane styleClass="icon, ic-blue" userData="pencil-simple:14"/>
-                                                <Label text="Edit" styleClass="btn-label"/>
-                                            </HBox>
-                                        </graphic>
-                                    </Button>
-                                    <Button fx:id="archiveContactBtn" onAction="#onArchiveFromDetail"
-                                            styleClass="btn-outline" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="38">
-                                        <graphic>
-                                            <HBox alignment="CENTER" spacing="8">
-                                                <StackPane styleClass="icon, ic-blue" userData="archive:14"/>
-                                                <Label text="Archive" styleClass="btn-label"/>
-                                            </HBox>
-                                        </graphic>
-                                    </Button>
-                                </HBox>
+                                <Button fx:id="editContactBtn" onAction="#onEditContact"
+                                        styleClass="btn-outline" maxWidth="Infinity" prefHeight="38">
+                                    <graphic>
+                                        <HBox alignment="CENTER" spacing="8">
+                                            <StackPane styleClass="icon, ic-blue" userData="pencil-simple:14"/>
+                                            <Label text="Edit contact" styleClass="btn-label"/>
+                                        </HBox>
+                                    </graphic>
+                                </Button>
 
                                 <Button fx:id="deleteContactBtn" onAction="#onDeleteFromDetail"
                                         styleClass="btn-outline-danger" maxWidth="Infinity" prefHeight="38">
@@ -367,6 +356,7 @@
             <!-- ============ PAGE 2: CONNECTION FINDER ============ -->
             <ScrollPane fx:id="finderPage" visible="false" managed="false" fitToWidth="true"
                         hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
+                <!-- minWidth 860 = 352 result card + 24 gap + 420 network card + 64 page padding -->
                 <VBox fx:id="finderContent" spacing="24" minWidth="860">
                     <padding><Insets top="20" right="32" bottom="32" left="32"/></padding>
 
@@ -376,150 +366,176 @@
                                styleClass="page-subtitle"/>
                     </VBox>
 
-                    <!-- Chooser card -->
+                    <!-- ===== Chooser card ===== -->
                     <VBox styleClass="card-shadow" spacing="16">
                         <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
-                        <HBox>
+
+                        <HBox alignment="CENTER_LEFT" spacing="12">
                             <Label text="Choose two contacts" styleClass="card-title-sm"/>
                             <Region HBox.hgrow="ALWAYS"/>
-                            <Label fx:id="finderSearchHint" text="Search across all 3 contacts" styleClass="group-count"/>
+                            <Label fx:id="finderSearchHint" text="Search across all contacts" styleClass="group-count"/>
                         </HBox>
 
-                        <HBox spacing="16" alignment="BOTTOM_LEFT">
-                            <VBox spacing="8" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                        <!-- fillHeight=false: nothing is stretched, everything sits on the same bottom edge -->
+                        <HBox spacing="12" alignment="BOTTOM_LEFT" fillHeight="false">
+                            <VBox spacing="8" HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="180">
                                 <Label text="Starting contact" styleClass="field-label"/>
-                                <ComboBox fx:id="fromCombo" maxWidth="Infinity" prefHeight="52" minHeight="52"
+                                <ComboBox fx:id="fromCombo" maxWidth="Infinity"
+                                          prefHeight="52" minHeight="52" maxHeight="52"
                                           styleClass="contact-combo"/>
                             </VBox>
 
-                            <StackPane prefWidth="38" minWidth="38" prefHeight="52" minHeight="52">
+                            <StackPane prefWidth="24" minWidth="24" maxWidth="24"
+                                       prefHeight="52" minHeight="52" maxHeight="52">
                                 <StackPane styleClass="icon, ic-blue" userData="arrow-right:18"/>
                             </StackPane>
 
-                            <VBox spacing="8" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                            <VBox spacing="8" HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="180">
                                 <Label text="Destination contact" styleClass="field-label"/>
-                                <ComboBox fx:id="toCombo" maxWidth="Infinity" prefHeight="52" minHeight="52"
+                                <ComboBox fx:id="toCombo" maxWidth="Infinity"
+                                          prefHeight="52" minHeight="52" maxHeight="52"
                                           styleClass="contact-combo"/>
                             </VBox>
 
-                            <VBox alignment="CENTER_LEFT" prefHeight="52" minHeight="52">
-                                <Button fx:id="findBtn" onAction="#onFindConnection" styleClass="btn-primary" prefHeight="42">
-                                    <graphic>
-                                        <HBox alignment="CENTER" spacing="8">
-                                            <StackPane styleClass="icon, ic-white" userData="magnifying-glass:16"/>
-                                            <Label text="Find connection" styleClass="btn-label"/>
-                                        </HBox>
-                                    </graphic>
-                                </Button>
-                            </VBox>
+                            <!-- same 52px height as the combos, so the top and bottom edges line up -->
+                            <Button fx:id="findBtn" onAction="#onFindConnection" styleClass="btn-primary"
+                                    minWidth="-Infinity" prefHeight="52" minHeight="52" maxHeight="52">
+                                <graphic>
+                                    <HBox alignment="CENTER" spacing="8">
+                                        <StackPane styleClass="icon, ic-white" userData="magnifying-glass:16"/>
+                                        <Label text="Find connection" styleClass="btn-label"/>
+                                    </HBox>
+                                </graphic>
+                            </Button>
                         </HBox>
                     </VBox>
 
-                    <!-- Result + network view -->
+                    <!-- ===== Result + network view ===== -->
                     <HBox spacing="24">
 
                         <!-- Result card -->
                         <VBox styleClass="card-shadow" spacing="20"
-                              prefWidth="352" minWidth="352" maxWidth="352" prefHeight="536" minHeight="536" maxHeight="536">
+                              prefWidth="352" minWidth="352" maxWidth="352"
+                              prefHeight="536" minHeight="536" maxHeight="536">
                             <padding><Insets top="24" right="24" bottom="24" left="24"/></padding>
 
-                            <HBox alignment="CENTER_LEFT" spacing="7">
+                            <HBox alignment="CENTER_LEFT" spacing="8">
                                 <StackPane styleClass="icon, ic-blue" userData="check-circle:18"/>
-                                <Label fx:id="resultStatus" text="CONNECTION FOUND" styleClass="result-status"/>
+                                <Label fx:id="resultStatus" text="SELECT CONTACTS" styleClass="result-status"/>
                             </HBox>
 
                             <VBox spacing="8">
-                                <Label fx:id="resultTitle" text="Connected through Test" styleClass="result-title" wrapText="true"/>
-                                <Label fx:id="resultDesc" text="Another One and Sheesh are 2 connections apart."
-                                       styleClass="result-desc" wrapText="true"/>
+                                <!-- minHeight=-Infinity: wrapped text keeps its full height instead of ending in "…" -->
+                                <Label fx:id="resultTitle" text="Choose two contacts" styleClass="result-title"
+                                       wrapText="true" minHeight="-Infinity"/>
+                                <Label fx:id="resultDesc" text="Pick a starting and a destination contact."
+                                       styleClass="result-desc" wrapText="true" minHeight="-Infinity"/>
                             </VBox>
 
                             <HBox fx:id="statsBox" styleClass="stats-box" spacing="24" alignment="CENTER_LEFT">
                                 <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
                                 <VBox spacing="4">
-                                    <Label fx:id="statDistance" text="2" styleClass="stats-number"/>
+                                    <Label fx:id="statDistance" text="0" styleClass="stats-number"/>
                                     <Label fx:id="statDistanceLabel" text="Connections" styleClass="stats-label"/>
                                 </VBox>
-                                <Region styleClass="stats-divider" prefWidth="1" minWidth="1" maxWidth="1" prefHeight="46" minHeight="46"/>
+                                <Region styleClass="stats-divider" prefWidth="1" minWidth="1" maxWidth="1"
+                                        prefHeight="46" minHeight="46" maxHeight="46"/>
                                 <VBox spacing="4">
-                                    <Label fx:id="statMutual" text="1" styleClass="stats-number"/>
+                                    <Label fx:id="statMutual" text="0" styleClass="stats-number"/>
                                     <Label fx:id="statMutualLabel" text="Via contacts" styleClass="stats-label"/>
                                 </VBox>
                             </HBox>
 
                             <Label fx:id="pathHeader" text="SHORTEST PATH" styleClass="field-label-muted"/>
 
+                            <!-- The route list scrolls if a long route doesn't fit the fixed-height card -->
                             <ScrollPane fx:id="pathScroll" fitToWidth="true" hbarPolicy="NEVER"
                                         styleClass="clean-scroll" VBox.vgrow="ALWAYS" minHeight="120">
-                                <VBox fx:id="pathList"/>
+                                <!-- right padding keeps content clear of the 10px scrollbar -->
+                                <VBox fx:id="pathList">
+                                    <padding><Insets right="8"/></padding>
+                                </VBox>
                             </ScrollPane>
 
                             <HBox fx:id="pathNote" alignment="CENTER_LEFT" spacing="6">
                                 <StackPane styleClass="icon, ic-muted" userData="info:13"/>
                                 <Label fx:id="pathNoteLabel" text="No direct connection between these contacts."
-                                       styleClass="path-note" wrapText="true" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                                       styleClass="path-note" wrapText="true" minHeight="-Infinity"
+                                       HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
                             </HBox>
                         </VBox>
 
                         <!-- Network view card -->
                         <VBox styleClass="card-shadow" HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="420"
                               prefHeight="536" minHeight="536" maxHeight="536">
-                            <HBox alignment="CENTER_LEFT" prefHeight="70" minHeight="70" maxHeight="70">
+                            <HBox alignment="CENTER_LEFT" spacing="12" prefHeight="70" minHeight="70" maxHeight="70">
                                 <padding><Insets left="24" right="24"/></padding>
-                                <VBox spacing="5">
+                                <VBox spacing="4" minWidth="0">
                                     <Label text="Network view" styleClass="card-title-lg"/>
-                                    <Label fx:id="networkSubtitle" text="3 contacts · 2 direct connections" styleClass="group-count"/>
+                                    <Label fx:id="networkSubtitle" text="0 contacts · 0 direct connections"
+                                           styleClass="group-count"/>
                                 </VBox>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <Label fx:id="pathPill" text="Shortest path highlighted" styleClass="pill"/>
+                                <Label fx:id="pathPill" text="Shortest path highlighted" styleClass="pill"
+                                       minWidth="-Infinity"/>
                             </HBox>
 
                             <StackPane fx:id="graphHolder" styleClass="graph-bg" VBox.vgrow="ALWAYS">
                                 <Pane fx:id="graphPane"/>
 
+                                <!-- hint: ellipsis + max width so it never runs under the zoom box -->
                                 <HBox StackPane.alignment="BOTTOM_LEFT" alignment="CENTER_LEFT" spacing="7"
-                                      maxWidth="-Infinity" maxHeight="-Infinity" mouseTransparent="true">
+                                      maxWidth="260" maxHeight="-Infinity" mouseTransparent="true">
                                     <StackPane.margin><Insets left="24" bottom="24"/></StackPane.margin>
                                     <StackPane styleClass="icon, ic-soft" userData="cursor-click:13"/>
-                                    <Label text="Select a contact to explore their connections" styleClass="graph-hint"/>
+                                    <Label text="Select a contact to explore their connections"
+                                           styleClass="graph-hint" textOverrun="ELLIPSIS" HBox.hgrow="ALWAYS"/>
                                 </HBox>
 
                                 <VBox StackPane.alignment="BOTTOM_RIGHT" styleClass="zoom-box" spacing="4"
                                       maxWidth="-Infinity" maxHeight="-Infinity">
                                     <StackPane.margin><Insets right="24" bottom="24"/></StackPane.margin>
                                     <padding><Insets top="6" right="6" bottom="6" left="6"/></padding>
-                                    <Button onAction="#onZoomIn" styleClass="icon-btn">
+                                    <Button onAction="#onZoomIn" styleClass="icon-btn"
+                                            prefWidth="28" minWidth="28" prefHeight="28" minHeight="28">
                                         <tooltip><Tooltip text="Zoom in"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="plus:16"/></graphic>
                                     </Button>
-                                    <Button onAction="#onZoomOut" styleClass="icon-btn">
+                                    <Button onAction="#onZoomOut" styleClass="icon-btn"
+                                            prefWidth="28" minWidth="28" prefHeight="28" minHeight="28">
                                         <tooltip><Tooltip text="Zoom out"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="minus:16"/></graphic>
                                     </Button>
-                                    <Button onAction="#onZoomReset" styleClass="icon-btn">
+                                    <Button onAction="#onZoomReset" styleClass="icon-btn"
+                                            prefWidth="28" minWidth="28" prefHeight="28" minHeight="28">
                                         <tooltip><Tooltip text="Reset zoom"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="corners-out:16"/></graphic>
                                     </Button>
                                 </VBox>
                             </StackPane>
 
-                            <HBox styleClass="graph-footer" alignment="CENTER_LEFT" spacing="16" prefHeight="70" minHeight="70" maxHeight="70">
+                            <HBox styleClass="graph-footer" alignment="CENTER_LEFT" spacing="16"
+                                  prefHeight="70" minHeight="70" maxHeight="70">
                                 <padding><Insets left="24" right="24"/></padding>
                                 <HBox alignment="CENTER_LEFT" spacing="8" minWidth="-Infinity">
-                                    <Region styleClass="legend-line" prefWidth="24" minWidth="24" prefHeight="3" minHeight="3" maxHeight="3"/>
+                                    <Region styleClass="legend-line" prefWidth="24" minWidth="24"
+                                            prefHeight="3" minHeight="3" maxHeight="3"/>
                                     <Label text="Shortest path" styleClass="stats-label"/>
                                 </HBox>
-                                <Label fx:id="pathSummary" text="Another One → Test → Sheesh" styleClass="path-summary"
-                                       HBox.hgrow="ALWAYS" maxWidth="Infinity" alignment="CENTER_RIGHT"
-                                       textAlignment="RIGHT" textOverrun="ELLIPSIS"/>
+                                <!-- right-aligned, shrinks with an ellipsis instead of fighting the legend -->
+                                <Label fx:id="pathSummary" text="—" styleClass="path-summary"
+                                       HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="0"
+                                       alignment="CENTER_RIGHT" textAlignment="RIGHT" textOverrun="ELLIPSIS"/>
                             </HBox>
                         </VBox>
                     </HBox>
 
+                    <!-- same hint style as the Contacts page -->
                     <HBox alignment="CENTER_LEFT" spacing="8">
-                        <StackPane styleClass="icon, ic-blue" userData="info:14"/>
+                        <StackPane styleClass="icon, ic-muted" userData="info:13"/>
                         <Label text="Each line represents a direct connection saved in your contact network."
-                               styleClass="hint-text"/>
+                               styleClass="hint-text" wrapText="true" minHeight="-Infinity"
+                               HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
                     </HBox>
                 </VBox>
             </ScrollPane>
@@ -535,94 +551,111 @@
                         <Label text="Customize your contact lists and manage your network data." styleClass="page-subtitle"/>
                     </VBox>
 
-                    <!-- Contact list setting -->
+                    <!-- ============ Contact list setting ============ -->
                     <VBox styleClass="card-shadow">
                         <VBox styleClass="settings-head" spacing="4">
-                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <padding><Insets top="18" right="20" bottom="18" left="20"/></padding>
                             <Label text="Contact list setting" styleClass="card-title"/>
                             <Label text="Choose what appears in your contact lists." styleClass="setting-desc"/>
                         </VBox>
 
-                        <VBox styleClass="settings-row" spacing="12">
-                            <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
+                        <!-- Display format -->
+                        <VBox styleClass="settings-row" spacing="14">
+                            <padding><Insets top="18" right="20" bottom="20" left="20"/></padding>
                             <VBox spacing="4">
                                 <Label text="Contact display format" styleClass="setting-title-strong"/>
-                                <Label text="Select one format for the details shown with each contact’s name." styleClass="setting-desc"/>
+                                <Label text="Select one format for the details shown with each contact’s name."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <HBox spacing="12">
+                            <HBox spacing="12" alignment="CENTER_LEFT">
                                 <RadioButton fx:id="fmtPhone" text="Name + Phone number" onAction="#onSettingsChanged"
-                                             styleClass="format-option" selected="true" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
+                                             styleClass="format-option" selected="true"
+                                             maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
                                 <RadioButton fx:id="fmtEmail" text="Name + Email" onAction="#onSettingsChanged"
-                                             styleClass="format-option" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
+                                             styleClass="format-option"
+                                             maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
                                 <RadioButton fx:id="fmtBoth" text="Name + Phone + Email" onAction="#onSettingsChanged"
-                                             styleClass="format-option" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
+                                             styleClass="format-option"
+                                             maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="48" minHeight="48"/>
                             </HBox>
                         </VBox>
 
-                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24" prefHeight="76" minHeight="76">
-                            <padding><Insets left="20" right="20"/></padding>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <!-- Favorite list switch -->
+                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24" minHeight="76">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Show favorite contact list" styleClass="setting-title"/>
-                                <Label text="Display your favorite contacts above the contact directory." styleClass="setting-desc"/>
+                                <Label text="Display your favorite contacts above the contact directory."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <HBox alignment="CENTER_RIGHT" spacing="10">
-                                <Label fx:id="favToggleLabel" text="On" styleClass="switch-text"/>
-                                <ToggleButton fx:id="favToggle" selected="true" onAction="#onSettingsChanged" styleClass="switch"
-                                              contentDisplay="GRAPHIC_ONLY">
+                            <HBox alignment="CENTER_RIGHT" spacing="12" minWidth="-Infinity">
+                                <Label fx:id="favToggleLabel" text="On" styleClass="switch-text"
+                                       prefWidth="28" minWidth="28" alignment="CENTER_RIGHT"/>
+                                <ToggleButton fx:id="favToggle" selected="true" onAction="#onSettingsChanged"
+                                              styleClass="switch" contentDisplay="GRAPHIC_ONLY">
                                     <graphic><Region styleClass="switch-thumb" prefWidth="18" minWidth="18" maxWidth="18" prefHeight="18" minHeight="18" maxHeight="18"/></graphic>
                                 </ToggleButton>
                             </HBox>
                         </HBox>
 
-                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24" prefHeight="76" minHeight="76">
-                            <padding><Insets left="20" right="20"/></padding>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <!-- Recent list switch -->
+                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24" minHeight="76">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Show recently added list" styleClass="setting-title"/>
-                                <Label text="Display recently added contacts above the contact directory." styleClass="setting-desc"/>
+                                <Label text="Display recently added contacts above the contact directory."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <HBox alignment="CENTER_RIGHT" spacing="10">
-                                <Label fx:id="recentToggleLabel" text="On" styleClass="switch-text"/>
-                                <ToggleButton fx:id="recentToggle" selected="true" onAction="#onSettingsChanged" styleClass="switch"
-                                              contentDisplay="GRAPHIC_ONLY">
+                            <HBox alignment="CENTER_RIGHT" spacing="12" minWidth="-Infinity">
+                                <Label fx:id="recentToggleLabel" text="On" styleClass="switch-text"
+                                       prefWidth="28" minWidth="28" alignment="CENTER_RIGHT"/>
+                                <ToggleButton fx:id="recentToggle" selected="true" onAction="#onSettingsChanged"
+                                              styleClass="switch" contentDisplay="GRAPHIC_ONLY">
                                     <graphic><Region styleClass="switch-thumb" prefWidth="18" minWidth="18" maxWidth="18" prefHeight="18" minHeight="18" maxHeight="18"/></graphic>
                                 </ToggleButton>
                             </HBox>
                         </HBox>
 
-                        <HBox alignment="CENTER_LEFT" spacing="24" prefHeight="76" minHeight="76">
-                            <padding><Insets left="20" right="20"/></padding>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <!-- Dark mode switch (last row: no bottom border) -->
+                        <HBox alignment="CENTER_LEFT" spacing="24" minHeight="76">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Dark mode" styleClass="setting-title"/>
-                                <Label text="Switch the interface to a dark colour theme." styleClass="setting-desc"/>
+                                <Label text="Switch the interface to a dark colour theme."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <HBox alignment="CENTER_RIGHT" spacing="10">
-                                <Label fx:id="darkModeToggleLabel" text="Off" styleClass="switch-text"/>
-                                <ToggleButton fx:id="darkModeToggle" selected="false" onAction="#onDarkModeChanged" styleClass="switch"
-                                              contentDisplay="GRAPHIC_ONLY">
+                            <HBox alignment="CENTER_RIGHT" spacing="12" minWidth="-Infinity">
+                                <Label fx:id="darkModeToggleLabel" text="Off" styleClass="switch-text"
+                                       prefWidth="28" minWidth="28" alignment="CENTER_RIGHT"/>
+                                <ToggleButton fx:id="darkModeToggle" selected="false" onAction="#onDarkModeChanged"
+                                              styleClass="switch" contentDisplay="GRAPHIC_ONLY">
                                     <graphic><Region styleClass="switch-thumb" prefWidth="18" minWidth="18" maxWidth="18" prefHeight="18" minHeight="18" maxHeight="18"/></graphic>
                                 </ToggleButton>
                             </HBox>
                         </HBox>
                     </VBox>
 
-                    <!-- Database -->
+                    <!-- ============ Database ============ -->
                     <VBox styleClass="card-shadow">
                         <VBox styleClass="settings-head" spacing="4">
-                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <padding><Insets top="18" right="20" bottom="18" left="20"/></padding>
                             <Label text="Database" styleClass="card-title"/>
                             <Label text="Back up, restore, or clear your contacts and connections." styleClass="setting-desc"/>
                         </VBox>
 
-                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16" prefHeight="86" minHeight="86">
-                            <padding><Insets left="20" right="20"/></padding>
-                            <StackPane styleClass="icon-tile" prefWidth="36" minWidth="36" maxWidth="36" prefHeight="36" minHeight="36" maxHeight="36">
+                        <!-- Backup -->
+                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16" minHeight="80">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <StackPane styleClass="icon-tile" prefWidth="40" minWidth="40" maxWidth="40" prefHeight="40" minHeight="40" maxHeight="40">
                                 <StackPane styleClass="icon, ic-blue" userData="database:18"/>
                             </StackPane>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Backup Data" styleClass="setting-title"/>
-                                <Label text="Download a backup of your contacts and their connections." styleClass="setting-desc" wrapText="true"/>
+                                <Label text="Download a backup of your contacts and their connections."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <Button fx:id="backupBtn" onAction="#onBackupData" styleClass="btn-outline-blue" prefWidth="158" minWidth="158" prefHeight="38">
+                            <Button fx:id="backupBtn" onAction="#onBackupData" styleClass="btn-outline-blue"
+                                    prefWidth="158" minWidth="158" maxWidth="158" prefHeight="38" minHeight="38">
                                 <graphic>
                                     <HBox alignment="CENTER" spacing="8">
                                         <StackPane styleClass="icon, ic-blue" userData="download-simple:15"/>
@@ -632,16 +665,19 @@
                             </Button>
                         </HBox>
 
-                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16" prefHeight="86" minHeight="86">
-                            <padding><Insets left="20" right="20"/></padding>
-                            <StackPane styleClass="icon-tile" prefWidth="36" minWidth="36" maxWidth="36" prefHeight="36" minHeight="36" maxHeight="36">
+                        <!-- Restore -->
+                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="16" minHeight="80">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <StackPane styleClass="icon-tile" prefWidth="40" minWidth="40" maxWidth="40" prefHeight="40" minHeight="40" maxHeight="40">
                                 <StackPane styleClass="icon, ic-blue" userData="arrow-counter-clockwise:18"/>
                             </StackPane>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Restore Data" styleClass="setting-title"/>
-                                <Label text="Restore contacts and connections from a backup file." styleClass="setting-desc" wrapText="true"/>
+                                <Label text="Restore contacts and connections from a backup file."
+                                       styleClass="setting-desc" wrapText="true"/>
                             </VBox>
-                            <Button fx:id="restoreBtn" onAction="#onRestoreData" styleClass="btn-outline-blue" prefWidth="158" minWidth="158" prefHeight="38">
+                            <Button fx:id="restoreBtn" onAction="#onRestoreData" styleClass="btn-outline-blue"
+                                    prefWidth="158" minWidth="158" maxWidth="158" prefHeight="38" minHeight="38">
                                 <graphic>
                                     <HBox alignment="CENTER" spacing="8">
                                         <StackPane styleClass="icon, ic-blue" userData="upload-simple:15"/>
@@ -651,17 +687,21 @@
                             </Button>
                         </HBox>
 
-                        <HBox styleClass="danger-row" alignment="CENTER_LEFT" spacing="16">
-                            <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
-                            <StackPane styleClass="icon-tile-white" prefWidth="36" minWidth="36" maxWidth="36" prefHeight="36" minHeight="36" maxHeight="36">
+                        <!-- Clear all (danger) -->
+                        <HBox styleClass="danger-row" alignment="CENTER_LEFT" spacing="16" minHeight="80">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <StackPane styleClass="icon-tile-white" prefWidth="40" minWidth="40" maxWidth="40" prefHeight="40" minHeight="40" maxHeight="40">
                                 <StackPane styleClass="icon, ic-danger" userData="trash:18"/>
                             </StackPane>
-                            <VBox spacing="5" HBox.hgrow="ALWAYS">
+                            <VBox spacing="4" HBox.hgrow="ALWAYS" minWidth="0">
                                 <Label text="Clear All Data" styleClass="danger-title"/>
-                                <Label text="Permanently removes all contacts and connections. This cannot be undone." styleClass="setting-desc" wrapText="true"/>
-                                <Label text="Create a backup before clearing your network." styleClass="setting-note"/>
+                                <Label text="Permanently removes all contacts and connections. This cannot be undone."
+                                       styleClass="setting-desc" wrapText="true"/>
+                                <Label text="Create a backup before clearing your network."
+                                       styleClass="setting-note" wrapText="true"/>
                             </VBox>
-                            <Button fx:id="clearBtn" onAction="#onClearData" styleClass="btn-outline-danger" prefWidth="158" minWidth="158" prefHeight="38">
+                            <Button fx:id="clearBtn" onAction="#onClearData" styleClass="btn-outline-danger"
+                                    prefWidth="158" minWidth="158" maxWidth="158" prefHeight="38" minHeight="38">
                                 <graphic>
                                     <HBox alignment="CENTER" spacing="8">
                                         <StackPane styleClass="icon, ic-danger" userData="trash:15"/>

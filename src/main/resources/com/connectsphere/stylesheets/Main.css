@@ -311,7 +311,7 @@
 .switch:selected { -fx-background-color: -accent; -fx-alignment: CENTER_RIGHT; }
 .switch:focus  { -fx-background-insets: 0; }
 .switch-thumb    { -fx-background-color: white; -fx-background-radius: 100px; }
-.switch-text     { -fx-text-fill: -muted; -fx-font-size: 12px; }
+.switch-text  { -fx-text-fill: -muted; -fx-font-size: 12px; -fx-font-weight: 500; }
 
 /* Connection list (checkbox list in add/edit) */
 .connection-list { -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border; -fx-border-radius: 8; -fx-padding: 0; }
@@ -394,7 +394,7 @@
    ===================================================================== */
 .setting-title        { -fx-text-fill: -text;  -fx-font-size: 14px; -fx-font-weight: 500; }
 .setting-title-strong { -fx-text-fill: -text;  -fx-font-size: 14px; -fx-font-weight: 600; }
-.setting-desc { -fx-text-fill: -muted; -fx-font-size: 13px; }
+.setting-desc { -fx-text-fill: -muted; -fx-font-size: 13px; -fx-line-spacing: 2px; }
 .setting-note { -fx-text-fill: -muted; -fx-font-size: 12px; }
 .settings-head { -fx-border-color: transparent transparent -border transparent; -fx-border-width: 0 0 1 0; }
 .settings-row  { -fx-border-color: transparent transparent -border transparent; -fx-border-width: 0 0 1 0; }
@@ -411,9 +411,9 @@
 .format-option:focus { -fx-background-insets: 0; }
 
 /* Icon tiles: .icon-tile = 8px radius (settings), .icon-tile-lg = 12px radius (forms) */
-.icon-tile       { -fx-background-color: -tint;    -fx-background-radius: 8; }
+.icon-tile       { -fx-background-color: -tint;    -fx-background-radius: 10; }
 .icon-tile-lg    { -fx-background-color: -tint;    -fx-background-radius: 12; }
-.icon-tile-white { -fx-background-color: -surface; -fx-background-radius: 8; }
+.icon-tile-white { -fx-background-color: -surface; -fx-background-radius: 10; }
 
 .danger-row   { -fx-background-color: -danger-bg; -fx-background-radius: 0 0 12 12; }
 .danger-title { -fx-text-fill: -danger-strong; -fx-font-size: 14px; -fx-font-weight: 600; }

@@ -158,7 +158,7 @@ public class MainController {
     @FXML private StackPane pageStack;
     @FXML private ScrollPane contactsPage, finderPage, settingsPage, pathScroll;
     @FXML private ScrollPane archivedPage;
-    @FXML private Button navArchivedBtn, archiveContactBtn;
+    @FXML private Button navArchivedBtn;
     @FXML private Label navArchivedCount, archivedCount;
     @FXML private VBox archivedList;
 
@@ -1901,12 +1901,6 @@ public class MainController {
 // ARCHIVE
 // ═════════════════════════════════════════════════════════════════
     @FXML private void onNavArchived() { showPage(archivedPage); }
-
-    @FXML
-    private void onArchiveFromDetail() {
-        Contact c = selected();
-        if (c != null) archiveContact(c);
-    }
 
     private void archiveContact(Contact c) {
         if (!confirm("Archive contact",
