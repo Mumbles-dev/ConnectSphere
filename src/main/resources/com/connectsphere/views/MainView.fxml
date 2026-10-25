@@ -2,6 +2,7 @@
 
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
+<?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.shape.SVGPath?>
@@ -12,98 +13,124 @@
   Page 2 = Connection Finder   (#finderPage    - ScrollPane)
   Page 3 = Settings            (#settingsPage  - ScrollPane)
   Page 4 = Add / Edit contact  (#formPage      - VBox)
+  Page 5 = Archived            (#archivedPage  - ScrollPane)
 
   ICONS: every <StackPane styleClass="icon, ic-*" userData="phosphor-name:size"/> is a holder.
   MainController#applyPhosphorIcons() fills it with the Phosphor SVG path.
 -->
+<?import javafx.scene.image.Image?>
 <HBox fx:id="root" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.connectsphere.controller.MainController"
       stylesheets="@../stylesheets/Main.css" styleClass="app-root" prefWidth="1280" prefHeight="820">
 
     <!-- ===================== SIDEBAR ===================== -->
-    <VBox styleClass="sidebar" prefWidth="224" minWidth="224" maxWidth="224" spacing="32">
-        <padding><Insets top="30" right="16" bottom="24" left="16"/></padding>
+    <VBox styleClass="sidebar" prefWidth="224" minWidth="224" maxWidth="224">
+        <ScrollPane fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER" vbarPolicy="AS_NEEDED"
+                    styleClass="clean-scroll" VBox.vgrow="ALWAYS">
+            <VBox spacing="32">
+                <padding><Insets top="30" right="16" bottom="24" left="16"/></padding>
 
-        <!-- Brand -->
-        <HBox alignment="CENTER_LEFT" spacing="10">
-            <padding><Insets left="8" right="8"/></padding>
-            <StackPane styleClass="brand-badge" prefWidth="34" prefHeight="34" minWidth="34" minHeight="34">
-                <StackPane styleClass="icon, ic-white" userData="share-network:20"/>
-            </StackPane>
-            <VBox spacing="2">
-                <Label text="ConnectSphere" styleClass="brand-title"/>
-                <Label text="Your network" styleClass="brand-subtitle"/>
-            </VBox>
-        </HBox>
+                <!-- Brand -->
+                <HBox alignment="CENTER_LEFT" spacing="10">
+                    <padding><Insets left="8" right="8"/></padding>
 
-        <!-- Navigation (button content width = 192 - 24 padding = 168) -->
-        <VBox spacing="8">
-            <Label text="WORKSPACE" styleClass="sidebar-section"/>
+                    <StackPane styleClass="logo-box" prefWidth="48" prefHeight="48"
+                               minWidth="48" minHeight="48" maxWidth="48" maxHeight="48">
+                        <ImageView fitWidth="40" fitHeight="40" preserveRatio="true" smooth="true">
+                            <image>
+                                <Image url="@../images/Logo.png" requestedWidth="160" requestedHeight="160"
+                                       backgroundLoading="true"/>
+                            </image>
+                        </ImageView>
+                    </StackPane>
 
-            <Button fx:id="navContactsBtn" onAction="#onNavContacts" styleClass="nav-item"
-                    maxWidth="Infinity" prefHeight="46">
-                <graphic>
-                    <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
-                        <StackPane styleClass="icon, ic-nav" userData="address-book:18"/>
-                        <Label text="Contacts" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
-                        <Label fx:id="navContactsCount" text="3" styleClass="nav-count"/>
-                    </HBox>
-                </graphic>
-            </Button>
+                    <VBox spacing="2">
+                        <Label text="ConnectSphere" styleClass="brand-title"/>
+                        <Label text="Your network" styleClass="brand-subtitle"/>
+                    </VBox>
+                </HBox>
 
-            <Button fx:id="navFinderBtn" onAction="#onNavFinder" styleClass="nav-item"
-                    maxWidth="Infinity" prefHeight="46">
-                <graphic>
-                    <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
-                        <StackPane styleClass="icon, ic-nav" userData="path:18"/>
-                        <Label text="Connection Finder" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
-                    </HBox>
-                </graphic>
-            </Button>
+                <!-- Navigation (button content width = 192 - 24 padding = 168) -->
+                <VBox spacing="8">
+                    <Label text="WORKSPACE" styleClass="sidebar-section"/>
 
-            <Button fx:id="navSettingsBtn" onAction="#onNavSettings" styleClass="nav-item"
-                    maxWidth="Infinity" prefHeight="46">
-                <graphic>
-                    <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
-                        <StackPane styleClass="icon, ic-nav" userData="gear:18"/>
-                        <Label text="Settings" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
-                    </HBox>
-                </graphic>
-            </Button>
-        </VBox>
+                    <Button fx:id="navContactsBtn" onAction="#onNavContacts" styleClass="nav-item"
+                            maxWidth="Infinity" prefHeight="46">
+                        <graphic>
+                            <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
+                                <StackPane styleClass="icon, ic-nav" userData="address-book:18"/>
+                                <Label text="Contacts" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                                <Label fx:id="navContactsCount" text="3" styleClass="nav-count"/>
+                            </HBox>
+                        </graphic>
+                    </Button>
 
-        <Region VBox.vgrow="ALWAYS"/>
+                    <Button fx:id="navFinderBtn" onAction="#onNavFinder" styleClass="nav-item"
+                            maxWidth="Infinity" prefHeight="46">
+                        <graphic>
+                            <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
+                                <StackPane styleClass="icon, ic-nav" userData="path:18"/>
+                                <Label text="Connection Finder" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                            </HBox>
+                        </graphic>
+                    </Button>
 
-        <!-- Network stats card -->
-        <VBox styleClass="sidebar-card" spacing="14">
-            <padding><Insets top="16" right="16" bottom="16" left="16"/></padding>
-            <HBox alignment="CENTER_LEFT" spacing="8">
-                <StackPane styleClass="icon, ic-nav" userData="share-network:16"/>
-                <Label text="Your network" styleClass="stat-card-title"/>
-            </HBox>
-            <HBox spacing="20">
-                <VBox spacing="4">
-                    <Label fx:id="statContacts" text="3" styleClass="stat-number"/>
-                    <Label text="Contacts" styleClass="stat-label"/>
+                    <Button fx:id="navArchivedBtn" onAction="#onNavArchived" styleClass="nav-item"
+                            maxWidth="Infinity" prefHeight="46">
+                        <graphic>
+                            <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
+                                <StackPane styleClass="icon, ic-nav" userData="archive:18"/>
+                                <Label text="Archived" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                                <Label fx:id="navArchivedCount" text="0" styleClass="nav-count"/>
+                            </HBox>
+                        </graphic>
+                    </Button>
+
+                    <Button fx:id="navSettingsBtn" onAction="#onNavSettings" styleClass="nav-item"
+                            maxWidth="Infinity" prefHeight="46">
+                        <graphic>
+                            <HBox alignment="CENTER_LEFT" spacing="10" prefWidth="168">
+                                <StackPane styleClass="icon, ic-nav" userData="gear:18"/>
+                                <Label text="Settings" styleClass="nav-text" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                            </HBox>
+                        </graphic>
+                    </Button>
                 </VBox>
-                <VBox spacing="4">
-                    <Label fx:id="statConnections" text="2" styleClass="stat-number"/>
-                    <Label text="Connections" styleClass="stat-label"/>
-                </VBox>
-            </HBox>
-        </VBox>
 
-        <!-- Workspace footer -->
-        <HBox alignment="CENTER_LEFT" spacing="10">
-            <padding><Insets left="8" right="8"/></padding>
-            <StackPane styleClass="workspace-badge" prefWidth="32" prefHeight="32" minWidth="32" minHeight="32">
-                <StackPane styleClass="icon, ic-nav" userData="stack:16"/>
-            </StackPane>
-            <VBox spacing="3">
-                <Label text="Contact workspace" styleClass="workspace-title"/>
-                <Label text="Personal network" styleClass="workspace-subtitle"/>
+                <Region VBox.vgrow="ALWAYS"/>
+
+                <!-- Network stats card -->
+                <VBox styleClass="sidebar-card" spacing="14">
+                    <padding><Insets top="16" right="16" bottom="16" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <StackPane styleClass="icon, ic-nav" userData="share-network:16"/>
+                        <Label text="Your network" styleClass="stat-card-title"/>
+                    </HBox>
+                    <HBox spacing="20">
+                        <VBox spacing="4">
+                            <Label fx:id="statContacts" text="3" styleClass="stat-number"/>
+                            <Label text="Contacts" styleClass="stat-label"/>
+                        </VBox>
+                        <VBox spacing="4">
+                            <Label fx:id="statConnections" text="2" styleClass="stat-number"/>
+                            <Label text="Connections" styleClass="stat-label"/>
+                        </VBox>
+                    </HBox>
+                </VBox>
+
+                <!-- Workspace footer -->
+                <HBox alignment="CENTER_LEFT" spacing="10">
+                    <padding><Insets left="8" right="8"/></padding>
+                    <StackPane styleClass="workspace-badge" prefWidth="32" prefHeight="32" minWidth="32" minHeight="32">
+                        <StackPane styleClass="icon, ic-nav" userData="stack:16"/>
+                    </StackPane>
+                    <VBox spacing="3">
+                        <Label text="Contact workspace" styleClass="workspace-title"/>
+                        <Label text="Personal network" styleClass="workspace-subtitle"/>
+                    </VBox>
+                </HBox>
             </VBox>
-        </HBox>
+        </ScrollPane>
     </VBox>
 
     <!-- ===================== MAIN AREA ===================== -->
@@ -119,6 +146,7 @@
             </HBox>
             <Region HBox.hgrow="ALWAYS"/>
             <Button fx:id="darkModeQuickBtn" onAction="#onDarkModeQuickToggle" styleClass="icon-btn" minWidth="36" prefWidth="36" prefHeight="36">
+                <tooltip><Tooltip text="Toggle dark mode"/></tooltip>
                 <graphic><StackPane fx:id="darkModeQuickIcon" styleClass="icon, ic-muted" userData="moon:18"/></graphic>
             </Button>
             <HBox alignment="CENTER_RIGHT" spacing="8">
@@ -132,8 +160,8 @@
 
             <!-- ============ PAGE 1: CONTACTS ============ -->
             <ScrollPane fx:id="contactsPage" fitToWidth="true" fitToHeight="true"
-                        hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
-                <VBox fx:id="contactsContent" spacing="14">
+                        hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
+                <VBox fx:id="contactsContent" spacing="14" minWidth="810">
                     <padding><Insets top="20" right="32" bottom="20" left="32"/></padding>
 
                     <HBox alignment="CENTER_LEFT">
@@ -175,7 +203,7 @@
                     <HBox spacing="20" VBox.vgrow="ALWAYS" minHeight="560">
 
                         <!-- Contact directory card -->
-                        <VBox styleClass="card-shadow" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                        <VBox styleClass="card-shadow" HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="380">
                             <HBox alignment="CENTER_LEFT">
                                 <padding><Insets top="12" right="20" bottom="12" left="20"/></padding>
                                 <Label text="Contact directory" styleClass="card-title"/>
@@ -196,6 +224,7 @@
                                                styleClass="search-field" HBox.hgrow="ALWAYS"/>
                                     <Button fx:id="clearSearchBtn" onAction="#onClearSearch" styleClass="icon-btn"
                                             visible="false" managed="false" minWidth="20" prefWidth="20">
+                                        <tooltip><Tooltip text="Clear search"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="x:14"/></graphic>
                                     </Button>
                                 </HBox>
@@ -220,8 +249,6 @@
                                 <Region prefWidth="16" minWidth="16"/>
                             </HBox>
 
-                            <!-- vbarPolicy ALWAYS: the track is transparent, and the rows no longer
-                                 change width when the scrollbar appears -->
                             <ScrollPane fitToWidth="true" hbarPolicy="NEVER" vbarPolicy="ALWAYS"
                                         styleClass="clean-scroll" VBox.vgrow="ALWAYS">
                                 <VBox fx:id="directoryList"/>
@@ -260,15 +287,27 @@
                                     <Label fx:id="detailAdded" text="Sep 28, 2026" styleClass="detail-value"/>
                                 </HBox>
 
-                                <Button fx:id="editContactBtn" onAction="#onEditContact"
-                                        styleClass="btn-outline" maxWidth="Infinity" prefHeight="38">
-                                    <graphic>
-                                        <HBox alignment="CENTER" spacing="8">
-                                            <StackPane styleClass="icon, ic-blue" userData="pencil-simple:14"/>
-                                            <Label text="Edit contact" styleClass="btn-label"/>
-                                        </HBox>
-                                    </graphic>
-                                </Button>
+                                <!-- Edit + Archive side by side -->
+                                <HBox spacing="8">
+                                    <Button fx:id="editContactBtn" onAction="#onEditContact"
+                                            styleClass="btn-outline" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="38">
+                                        <graphic>
+                                            <HBox alignment="CENTER" spacing="8">
+                                                <StackPane styleClass="icon, ic-blue" userData="pencil-simple:14"/>
+                                                <Label text="Edit" styleClass="btn-label"/>
+                                            </HBox>
+                                        </graphic>
+                                    </Button>
+                                    <Button fx:id="archiveContactBtn" onAction="#onArchiveFromDetail"
+                                            styleClass="btn-outline" maxWidth="Infinity" HBox.hgrow="ALWAYS" prefHeight="38">
+                                        <graphic>
+                                            <HBox alignment="CENTER" spacing="8">
+                                                <StackPane styleClass="icon, ic-blue" userData="archive:14"/>
+                                                <Label text="Archive" styleClass="btn-label"/>
+                                            </HBox>
+                                        </graphic>
+                                    </Button>
+                                </HBox>
 
                                 <Button fx:id="deleteContactBtn" onAction="#onDeleteFromDetail"
                                         styleClass="btn-outline-danger" maxWidth="Infinity" prefHeight="38">
@@ -327,8 +366,8 @@
 
             <!-- ============ PAGE 2: CONNECTION FINDER ============ -->
             <ScrollPane fx:id="finderPage" visible="false" managed="false" fitToWidth="true"
-                        hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
-                <VBox fx:id="finderContent" spacing="24">
+                        hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
+                <VBox fx:id="finderContent" spacing="24" minWidth="860">
                     <padding><Insets top="20" right="32" bottom="32" left="32"/></padding>
 
                     <VBox spacing="4">
@@ -410,7 +449,6 @@
 
                             <Label fx:id="pathHeader" text="SHORTEST PATH" styleClass="field-label-muted"/>
 
-                            <!-- The route list scrolls if a long route doesn't fit the fixed-height card -->
                             <ScrollPane fx:id="pathScroll" fitToWidth="true" hbarPolicy="NEVER"
                                         styleClass="clean-scroll" VBox.vgrow="ALWAYS" minHeight="120">
                                 <VBox fx:id="pathList"/>
@@ -424,7 +462,8 @@
                         </VBox>
 
                         <!-- Network view card -->
-                        <VBox styleClass="card-shadow" HBox.hgrow="ALWAYS" maxWidth="Infinity" prefHeight="536" minHeight="536" maxHeight="536">
+                        <VBox styleClass="card-shadow" HBox.hgrow="ALWAYS" maxWidth="Infinity" minWidth="420"
+                              prefHeight="536" minHeight="536" maxHeight="536">
                             <HBox alignment="CENTER_LEFT" prefHeight="70" minHeight="70" maxHeight="70">
                                 <padding><Insets left="24" right="24"/></padding>
                                 <VBox spacing="5">
@@ -450,12 +489,15 @@
                                     <StackPane.margin><Insets right="24" bottom="24"/></StackPane.margin>
                                     <padding><Insets top="6" right="6" bottom="6" left="6"/></padding>
                                     <Button onAction="#onZoomIn" styleClass="icon-btn">
+                                        <tooltip><Tooltip text="Zoom in"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="plus:16"/></graphic>
                                     </Button>
                                     <Button onAction="#onZoomOut" styleClass="icon-btn">
+                                        <tooltip><Tooltip text="Zoom out"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="minus:16"/></graphic>
                                     </Button>
                                     <Button onAction="#onZoomReset" styleClass="icon-btn">
+                                        <tooltip><Tooltip text="Reset zoom"/></tooltip>
                                         <graphic><StackPane styleClass="icon, ic-muted" userData="corners-out:16"/></graphic>
                                     </Button>
                                 </VBox>
@@ -467,7 +509,6 @@
                                     <Region styleClass="legend-line" prefWidth="24" minWidth="24" prefHeight="3" minHeight="3" maxHeight="3"/>
                                     <Label text="Shortest path" styleClass="stats-label"/>
                                 </HBox>
-                                <!-- right-aligned, shrinks with an ellipsis instead of fighting the legend -->
                                 <Label fx:id="pathSummary" text="Another One → Test → Sheesh" styleClass="path-summary"
                                        HBox.hgrow="ALWAYS" maxWidth="Infinity" alignment="CENTER_RIGHT"
                                        textAlignment="RIGHT" textOverrun="ELLIPSIS"/>
@@ -485,8 +526,8 @@
 
             <!-- ============ PAGE 3: SETTINGS ============ -->
             <ScrollPane fx:id="settingsPage" visible="false" managed="false" fitToWidth="true"
-                        hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
-                <VBox fx:id="settingsContent" spacing="24">
+                        hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
+                <VBox fx:id="settingsContent" spacing="24" minWidth="700">
                     <padding><Insets top="20" right="32" bottom="32" left="32"/></padding>
 
                     <VBox spacing="4">
@@ -533,7 +574,7 @@
                             </HBox>
                         </HBox>
 
-                        <HBox alignment="CENTER_LEFT" spacing="24" prefHeight="76" minHeight="76">
+                        <HBox styleClass="settings-row" alignment="CENTER_LEFT" spacing="24" prefHeight="76" minHeight="76">
                             <padding><Insets left="20" right="20"/></padding>
                             <VBox spacing="5" HBox.hgrow="ALWAYS">
                                 <Label text="Show recently added list" styleClass="setting-title"/>
@@ -633,6 +674,36 @@
                 </VBox>
             </ScrollPane>
 
+            <!-- ============ PAGE 5: ARCHIVED ============ -->
+            <ScrollPane fx:id="archivedPage" visible="false" managed="false" fitToWidth="true"
+                        hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED" styleClass="clean-scroll">
+                <VBox spacing="24" minWidth="700">
+                    <padding><Insets top="20" right="32" bottom="32" left="32"/></padding>
+
+                    <VBox spacing="4">
+                        <Label text="Archived" styleClass="page-title"/>
+                        <Label text="Contacts you've set aside. Restore them, or delete them for good." styleClass="page-subtitle"/>
+                    </VBox>
+
+                    <VBox styleClass="card-shadow">
+                        <HBox styleClass="settings-head" alignment="CENTER_LEFT">
+                            <padding><Insets top="16" right="20" bottom="16" left="20"/></padding>
+                            <Label text="Archived contacts" styleClass="card-title"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Label fx:id="archivedCount" text="0 contacts" styleClass="group-count"/>
+                        </HBox>
+                        <!-- rows are built by MainController#renderArchived() -->
+                        <VBox fx:id="archivedList"/>
+                    </VBox>
+
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <StackPane styleClass="icon, ic-muted" userData="info:13"/>
+                        <Label text="Archived contacts are hidden everywhere else. Their connections are kept and return when you restore them."
+                               styleClass="hint-text" wrapText="true"/>
+                    </HBox>
+                </VBox>
+            </ScrollPane>
+
             <!-- ============ PAGE 4: ADD / EDIT CONTACT ============ -->
             <VBox fx:id="formPage" visible="false" managed="false" spacing="20.0" styleClass="contact-form">
                 <padding>
@@ -648,10 +719,10 @@
                     <Label fx:id="subtitleLabel" styleClass="page-subtitle"/>
                 </VBox>
 
-                <HBox spacing="20.0" VBox.vgrow="ALWAYS">
+                <HBox spacing="20.0" VBox.vgrow="ALWAYS" minHeight="0">
 
                     <!-- ============ FORM CARD ============ -->
-                    <VBox styleClass="card" HBox.hgrow="ALWAYS">
+                    <VBox styleClass="card" HBox.hgrow="ALWAYS" minHeight="0">
                         <ScrollPane fitToWidth="true" hbarPolicy="NEVER" styleClass="form-scroll" VBox.vgrow="ALWAYS">
                             <VBox spacing="16.0">
                                 <padding>
@@ -663,7 +734,6 @@
                                     <Label styleClass="muted-12" text="Keep the essentials in one place."/>
                                 </VBox>
 
-                                <!-- Photo: icon (add) / initials (typed name) / uploaded image -->
                                 <HBox alignment="CENTER_LEFT" spacing="16.0">
                                     <StackPane fx:id="photoPane" styleClass="photo-circle"
                                                prefHeight="72.0" prefWidth="72.0" minHeight="72.0" minWidth="72.0"
@@ -675,8 +745,13 @@
                                         <ImageView fx:id="photoView" fitHeight="72.0" fitWidth="72.0" visible="false"/>
                                     </StackPane>
                                     <VBox spacing="8.0">
-                                        <Button fx:id="uploadPhotoButton" onAction="#onUploadPhoto"
-                                                styleClass="secondary-button" text="Upload photo"/>
+                                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                                            <Button fx:id="uploadPhotoButton" onAction="#onUploadPhoto"
+                                                    styleClass="secondary-button" text="Upload photo"/>
+                                            <Button fx:id="removePhotoButton" onAction="#onRemovePhoto"
+                                                    styleClass="secondary-button" text="Remove"
+                                                    visible="false" managed="false"/>
+                                        </HBox>
                                         <Label fx:id="photoHint" styleClass="hint-11"/>
                                         <Label fx:id="photoError" styleClass="error-label" visible="false" managed="false"/>
                                     </VBox>
@@ -694,7 +769,7 @@
                                     <VBox spacing="8.0" HBox.hgrow="ALWAYS">
                                         <Label styleClass="field-label" text="Phone number"/>
                                         <TextField fx:id="phoneField" promptText="Enter phone number" styleClass="field"/>
-                                        <Label fx:id="phoneError" styleClass="error-label" visible="false" managed="false"/>
+                                        <Label fx:id="phoneError" styleClass="error-label" wrapText="true" visible="false" managed="false"/>
                                     </VBox>
                                     <VBox spacing="8.0" HBox.hgrow="ALWAYS">
                                         <HBox alignment="CENTER_LEFT" spacing="6.0">
@@ -729,7 +804,6 @@
                                         </HBox>
                                         <Label styleClass="muted-12" text="Select people who are directly connected to this contact."/>
                                     </VBox>
-                                    <!-- "field" only: combining it with "search-field" removed the padding on focus -->
                                     <TextField fx:id="connSearchField" promptText="Search existing contacts…" styleClass="field"/>
                                     <ListView fx:id="contactListView" styleClass="connection-list"
                                               prefHeight="194.0" minHeight="194.0"/>
@@ -759,67 +833,70 @@
                         </HBox>
                     </VBox>
 
-                    <!-- ============ SIDE PANEL ============ -->
-                    <VBox spacing="20.0" prefWidth="340.0" minWidth="340.0" maxWidth="340.0">
+                    <!-- ============ SIDE PANEL (scrolls on short windows) ============ -->
+                    <ScrollPane fitToWidth="true" hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" styleClass="clean-scroll"
+                                prefWidth="340.0" minWidth="340.0" maxWidth="340.0">
+                        <VBox spacing="20.0">
 
-                        <!-- ADD mode: grow your network -->
-                        <VBox fx:id="addSideCard" spacing="18.0" styleClass="card,side-card">
-                            <Label styleClass="eyebrow" text="GROW YOUR NETWORK"/>
-                            <StackPane styleClass="icon-tile" prefHeight="44.0" prefWidth="44.0"
-                                       minHeight="44.0" minWidth="44.0" maxHeight="44.0" maxWidth="44.0">
-                                <SVGPath styleClass="accent-icon"
-                                         content="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/>
-                            </StackPane>
-                            <Label styleClass="side-heading" text="People first. Connections next." wrapText="true"/>
-                            <Label styleClass="muted-13-relaxed" wrapText="true"
-                                   text="Add a contact’s details, then connect them to people already in your network. You can also add connections later."/>
-                            <Region styleClass="divider-fill" prefHeight="1.0" minHeight="1.0" maxHeight="1.0"/>
-                            <Label fx:id="summaryLabel" styleClass="muted-12"/>
-                        </VBox>
-
-                        <!-- EDIT mode: editing contact (hidden until the form opens in edit mode) -->
-                        <VBox fx:id="editSideCard" visible="false" managed="false" spacing="18.0" styleClass="card,side-card">
-                            <Label styleClass="eyebrow" text="EDITING CONTACT"/>
-                            <HBox alignment="CENTER_LEFT" spacing="12.0">
-                                <StackPane fx:id="sideAvatarPane" styleClass="avatar-lg"
-                                           prefHeight="48.0" prefWidth="48.0" minHeight="48.0" minWidth="48.0"
-                                           maxHeight="48.0" maxWidth="48.0">
-                                    <Label fx:id="sideAvatarInitials" styleClass="avatar-label-lg"/>
-                                    <ImageView fx:id="sideAvatarView" fitHeight="48.0" fitWidth="48.0" visible="false"/>
+                            <!-- ADD mode: grow your network -->
+                            <VBox fx:id="addSideCard" spacing="18.0" styleClass="card,side-card">
+                                <Label styleClass="eyebrow" text="GROW YOUR NETWORK"/>
+                                <StackPane styleClass="icon-tile" prefHeight="44.0" prefWidth="44.0"
+                                           minHeight="44.0" minWidth="44.0" maxHeight="44.0" maxWidth="44.0">
+                                    <SVGPath styleClass="accent-icon"
+                                             content="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/>
                                 </StackPane>
-                                <VBox spacing="4.0" HBox.hgrow="ALWAYS">
-                                    <Label fx:id="sideNameLabel" styleClass="side-name"/>
-                                    <Label fx:id="sidePhoneLabel" styleClass="muted-12"/>
-                                </VBox>
-                            </HBox>
-                            <HBox fx:id="favoriteTagBox" alignment="CENTER_LEFT" spacing="6.0">
-                                <!-- icon holder instead of a scaled SVGPath: scaling doesn't change layout bounds -->
-                                <StackPane styleClass="icon, ic-blue" userData="star-fill:12"/>
-                                <Label styleClass="favorite-tag" text="Favorite contact"/>
-                            </HBox>
-                            <Region styleClass="divider-fill" prefHeight="1.0" minHeight="1.0" maxHeight="1.0"/>
-                            <HBox alignment="CENTER_LEFT">
-                                <Label styleClass="muted-12" text="Added to your network"/>
-                                <Region HBox.hgrow="ALWAYS"/>
-                                <Label fx:id="addedOnLabel" styleClass="value-12"/>
-                            </HBox>
-                        </VBox>
+                                <Label styleClass="side-heading" text="People first. Connections next." wrapText="true"/>
+                                <Label styleClass="muted-13-relaxed" wrapText="true"
+                                       text="Add a contact’s details, then connect them to people already in your network. You can also add connections later."/>
+                                <Region styleClass="divider-fill" prefHeight="1.0" minHeight="1.0" maxHeight="1.0"/>
+                                <Label fx:id="summaryLabel" styleClass="muted-12"/>
+                            </VBox>
 
-                        <!-- Both modes: connection explainer / current path -->
-                        <VBox spacing="16.0" styleClass="card,side-card">
-                            <Label fx:id="pathTitleLabel" styleClass="side-subheading"/>
-                            <Label fx:id="pathDescriptionLabel" styleClass="muted-12-relaxed" wrapText="true"/>
-                            <VBox fx:id="previewBox" spacing="12.0" styleClass="preview-box"/>
-                            <Label fx:id="pathFootnoteLabel" styleClass="muted-11-relaxed" wrapText="true"/>
+                            <!-- EDIT mode: editing contact -->
+                            <VBox fx:id="editSideCard" visible="false" managed="false" spacing="18.0" styleClass="card,side-card">
+                                <Label styleClass="eyebrow" text="EDITING CONTACT"/>
+                                <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                    <StackPane fx:id="sideAvatarPane" styleClass="avatar-lg"
+                                               prefHeight="48.0" prefWidth="48.0" minHeight="48.0" minWidth="48.0"
+                                               maxHeight="48.0" maxWidth="48.0">
+                                        <Label fx:id="sideAvatarInitials" styleClass="avatar-label-lg"/>
+                                        <ImageView fx:id="sideAvatarView" fitHeight="48.0" fitWidth="48.0" visible="false"/>
+                                    </StackPane>
+                                    <VBox spacing="4.0" HBox.hgrow="ALWAYS">
+                                        <Label fx:id="sideNameLabel" styleClass="side-name"/>
+                                        <Label fx:id="sidePhoneLabel" styleClass="muted-12"/>
+                                    </VBox>
+                                </HBox>
+                                <HBox fx:id="favoriteTagBox" alignment="CENTER_LEFT" spacing="6.0">
+                                    <StackPane styleClass="icon, ic-blue" userData="star-fill:12"/>
+                                    <Label styleClass="favorite-tag" text="Favorite contact"/>
+                                </HBox>
+                                <Region styleClass="divider-fill" prefHeight="1.0" minHeight="1.0" maxHeight="1.0"/>
+                                <HBox alignment="CENTER_LEFT">
+                                    <Label styleClass="muted-12" text="Added to your network"/>
+                                    <Region HBox.hgrow="ALWAYS"/>
+                                    <Label fx:id="addedOnLabel" styleClass="value-12"/>
+                                </HBox>
+                            </VBox>
+
+                            <!-- Both modes: connection explainer / current path -->
+                            <VBox spacing="16.0" styleClass="card,side-card">
+                                <Label fx:id="pathTitleLabel" styleClass="side-subheading"/>
+                                <Label fx:id="pathDescriptionLabel" styleClass="muted-12-relaxed" wrapText="true"/>
+                                <VBox fx:id="previewBox" spacing="12.0" styleClass="preview-box"/>
+                                <Label fx:id="pathFootnoteLabel" styleClass="muted-11-relaxed" wrapText="true"/>
+                            </VBox>
                         </VBox>
-                    </VBox>
+                    </ScrollPane>
                 </HBox>
             </VBox>
-            <!-- Toast notification overlay (auto-hides after 2.5 s) -->
+
+            <!-- Toast overlay. Must stay MANAGED, otherwise StackPane ignores alignment and margin. -->
             <HBox fx:id="toastBar" styleClass="toast-bar" alignment="CENTER" spacing="10"
-                  maxWidth="-Infinity" visible="false" managed="false" mouseTransparent="true">
+                  StackPane.alignment="BOTTOM_CENTER"
+                  maxWidth="-Infinity" maxHeight="-Infinity" visible="false" mouseTransparent="true">
                 <StackPane.margin><Insets bottom="24"/></StackPane.margin>
-                <StackPane.alignment>BOTTOM_CENTER</StackPane.alignment>
                 <StackPane styleClass="icon, ic-white" userData="check-circle:16"/>
                 <Label fx:id="toastLabel" styleClass="toast-text"/>
             </HBox>

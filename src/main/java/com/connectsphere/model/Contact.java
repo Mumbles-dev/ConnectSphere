@@ -17,11 +17,13 @@ public class Contact {
     private String name;
     private String phone;
     private String email;
-    private String dateAdded;  // raw LocalDateTime.toString() value from ContactDAO, e.g. "2026-09-27T14:03:10.123"; null for legacy rows added before this column existed
+    private String dateAdded;  // raw LocalDateTime.toString() value; null for legacy rows
     private boolean favorite;
-    private String photoPath;  // relative path under data/photos/, e.g. "data/photos/<uuid>.jpg"; null means no photo
+    private String photoPath;  // e.g. "data/photos/<uuid>.jpg"; null means no photo
+    private boolean archived;  // archived contacts only show on the Archived page
 
-    public Contact(int id, String name, String phone, String email, String dateAdded, boolean favorite, String photoPath) {
+    public Contact(int id, String name, String phone, String email, String dateAdded,
+                   boolean favorite, String photoPath, boolean archived) {
         this.id = id;
         this.name = name;
         this.phone = phone;
@@ -29,84 +31,47 @@ public class Contact {
         this.dateAdded = dateAdded;
         this.favorite = favorite;
         this.photoPath = photoPath;
+        this.archived = archived;
     }
 
-    // Convenience constructor for a brand-new contact not yet in the database.
-    // dateAdded is left null and favorite defaults to false — ContactDAO.addContact
-    // fills in dateAdded (stamped with "now") the moment the row is actually inserted.
+    // Kept so existing callers keep compiling: archived defaults to false.
+    public Contact(int id, String name, String phone, String email, String dateAdded,
+                   boolean favorite, String photoPath) {
+        this(id, name, phone, email, dateAdded, favorite, photoPath, false);
+    }
+
     public Contact(String name, String phone, String email) {
-        this(-1, name, phone, email, null, false, null);
+        this(-1, name, phone, email, null, false, null, false);
     }
 
-    // Convenience constructor for a new contact that already has a photo path chosen
-    // by the upload dialog (photo was copied to data/photos/ before this call).
     public Contact(String name, String phone, String email, String photoPath) {
-        this(-1, name, phone, email, null, false, photoPath);
+        this(-1, name, phone, email, null, false, photoPath, false);
     }
 
-    public int getId() {
-        return id;
-    }
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
 
-    public void setId(int id) {
-        this.id = id;
-    }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
 
-    public String getName() {
-        return name;
-    }
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
 
-    public void setName(String name) {
-        this.name = name;
-    }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
 
-    public String getPhone() {
-        return phone;
-    }
+    public String getDateAdded() { return dateAdded; }
+    public void setDateAdded(String dateAdded) { this.dateAdded = dateAdded; }
 
-    public void setPhone(String phone) {
-        this.phone = phone;
-    }
+    public boolean isFavorite() { return favorite; }
+    public void setFavorite(boolean favorite) { this.favorite = favorite; }
 
-    public String getEmail() {
-        return email;
-    }
+    public String getPhotoPath() { return photoPath; }
+    public void setPhotoPath(String photoPath) { this.photoPath = photoPath; }
 
-    public void setEmail(String email) {
-        this.email = email;
-    }
+    public boolean isArchived() { return archived; }
+    public void setArchived(boolean archived) { this.archived = archived; }
 
-    public String getDateAdded() {
-        return dateAdded;
-    }
-
-    public void setDateAdded(String dateAdded) {
-        this.dateAdded = dateAdded;
-    }
-
-    public boolean isFavorite() {
-        return favorite;
-    }
-
-    public void setFavorite(boolean favorite) {
-        this.favorite = favorite;
-    }
-
-    public String getPhotoPath() {
-        return photoPath;
-    }
-
-    public void setPhotoPath(String photoPath) {
-        this.photoPath = photoPath;
-    }
-
-    /**
-     * The date this contact was added, formatted for display (e.g. "Sep 27, 2026").
-     * dateAdded is stored as LocalDateTime.toString() output (ISO-8601, e.g.
-     * "2026-09-27T14:03:10.123"), so it round-trips through LocalDateTime.parse()
-     * with no custom formatter. Falls back gracefully for legacy contacts
-     * added before this column existed (dateAdded == null) or any unexpected shape.
-     */
     public String getFormattedDateAdded() {
         if (dateAdded == null || dateAdded.isBlank()) {
             return "Unknown date";
@@ -119,10 +84,6 @@ public class Contact {
         }
     }
 
-    /**
-     * TableView / ComboBox / debugging display.
-     * Selectors in the Connection Finder section will show this text.
-     */
     @Override
     public String toString() {
         return name;

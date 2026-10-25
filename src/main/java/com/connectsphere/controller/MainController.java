@@ -53,6 +53,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.connectsphere.dao.DuplicatePhoneException;
+import com.connectsphere.util.PhoneNormalizer;
+import javafx.application.Platform;
 
 /**
  * MainController — single controller behind MainView.fxml.
@@ -77,6 +80,7 @@ public class MainController {
     private final ConnectionDAO connectionDAO = new ConnectionDAO();
 
     private final ObservableList<Contact> allContactsData = FXCollections.observableArrayList();
+    private final ObservableList<Contact> archivedContactsData = FXCollections.observableArrayList();
     private final Map<Integer, Contact> contactsById = new HashMap<>();
 
     /** Snapshot of the connections table + adjacency built from it (graph drawing, 2-hop lookups). */
@@ -153,6 +157,10 @@ public class MainController {
     @FXML private Label breadcrumbCurrent, headerSummary;
     @FXML private StackPane pageStack;
     @FXML private ScrollPane contactsPage, finderPage, settingsPage, pathScroll;
+    @FXML private ScrollPane archivedPage;
+    @FXML private Button navArchivedBtn, archiveContactBtn;
+    @FXML private Label navArchivedCount, archivedCount;
+    @FXML private VBox archivedList;
 
     // FXML — Contacts page
     @FXML private Label favoritesCount, recentCount, footerCount;
@@ -248,6 +256,14 @@ public class MainController {
             renderDirectory();
         });
 
+        // Tell the user if old data has duplicate phone numbers (the unique index waits until they are fixed)
+        List<String> dupWarnings = DatabaseManager.getStartupWarnings();
+        if (!dupWarnings.isEmpty()) {
+            Platform.runLater(() -> info("Duplicate phone numbers found",
+                    "These active contacts share a phone number. Change or archive one of each pair; "
+                            + "uniqueness is enforced once they are fixed:\n\n" + String.join("\n", dupWarnings)));
+        }
+
         detailFavoriteTag.setCursor(Cursor.HAND);
         detailFavoriteTag.setOnMouseClicked(e -> { Contact c = selected(); if (c != null) toggleFavorite(c); });
 
@@ -295,6 +311,7 @@ public class MainController {
         if (page != finderPage) stopRouteCycler();
 
         for (Node n : pageStack.getChildren()) {
+            if (n == toastBar) continue;
             boolean on = n == page;
             n.setVisible(on);
             n.setManaged(on);
@@ -303,11 +320,13 @@ public class MainController {
         setActive(navContactsBtn, page == contactsPage || page == formPage);
         setActive(navFinderBtn, page == finderPage);
         setActive(navSettingsBtn, page == settingsPage);
+        setActive(navArchivedBtn, page == archivedPage);
 
         if (page == contactsPage) { breadcrumbCurrent.setText("Contacts"); contactsPage.setVvalue(0); }
         else if (page == finderPage) { breadcrumbCurrent.setText("Connection Finder"); renderFinder(); }
         else if (page == settingsPage) breadcrumbCurrent.setText("Settings");
         else if (page == formPage) breadcrumbCurrent.setText(formContact == null ? "Add contact" : "Edit contact");
+        else if (page == archivedPage) { breadcrumbCurrent.setText("Archived"); archivedPage.setVvalue(0); }
     }
 
     private void setActive(Button b, boolean active) {
@@ -324,13 +343,17 @@ public class MainController {
         int fromId = idOf(fromCombo.getValue()), toId = idOf(toCombo.getValue());
 
         List<Contact> contacts = contactDAO.getAllContacts();
+        archivedContactsData.setAll(contactDAO.getArchivedContacts());
         fromCombo.setValue(null);
         toCombo.setValue(null);
         allContactsData.setAll(contacts);
         contactsById.clear();
         for (Contact c : contacts) contactsById.put(c.getId(), c);
 
-        connectionsCache = connectionDAO.getAllConnections();
+        // keep only connections where BOTH ends are active (archived contacts' links stay in the DB)
+        connectionsCache = connectionDAO.getAllConnections().stream()
+                .filter(cn -> contactsById.containsKey(cn.getContactId1()) && contactsById.containsKey(cn.getContactId2()))
+                .collect(Collectors.toList());
         links.clear();
         for (Contact c : contacts) links.put(c.getId(), new LinkedHashSet<>());
         for (Connection cn : connectionsCache) {
@@ -371,6 +394,7 @@ public class MainController {
         renderRecent();
         renderDirectory();
         renderDetails();
+        renderArchived();
         renderFinder();
     }
 
@@ -468,7 +492,9 @@ public class MainController {
 
         // connections: every other contact is a candidate, never the contact itself
         formPreviousIds = editing
-                ? new HashSet<>(connectionDAO.getDirectConnections(existing.getId()))
+                ? connectionDAO.getDirectConnections(existing.getId()).stream()
+                  .filter(contactsById::containsKey)
+                  .collect(Collectors.toSet())
                 : Collections.emptySet();
         formSelectedIds.clear();
         formSelectedIds.addAll(formPreviousIds);
@@ -490,6 +516,7 @@ public class MainController {
         formPhotoPath = null;
         sessionUploadedPath = null;  // any prior session upload was already handled
         photoView.setImage(null);
+        show(removePhotoButton, false);
         photoHint.setText("JPG or PNG, up to 2 MB");
         if (editing && existing.getPhotoPath() != null) {
             File photoFile = new File(existing.getPhotoPath());
@@ -564,6 +591,12 @@ public class MainController {
             if (REQUIRE_PHONE) { fieldError(phoneError, "Phone number is required."); ok = false; }
         } else if (!phone.matches("[0-9+()\\-\\s]{4,20}")) {
             fieldError(phoneError, "Enter a valid phone number."); ok = false;
+        } else {
+            Contact clash = contactDAO.findActiveByPhone(phone, formContact == null ? -1 : formContact.getId());
+            if (clash != null) {
+                fieldError(phoneError, "This number is already used by " + clash.getName() + ".");
+                ok = false;
+            }
         }
         if (!email.isEmpty() && !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
             fieldError(emailError, "Enter a valid email address."); ok = false;
@@ -774,19 +807,7 @@ public class MainController {
     }
 
     private void confirmAndDeleteContact(Contact contact) {
-        if (!confirm("Delete Contact",
-                "Delete " + contact.getName() + "? This also removes any connections involving them.", "Delete"))
-            return;
-        try {
-            String photoPath = contact.getPhotoPath();  // capture before DB delete
-            contactDAO.deleteContact(contact.getId());
-            safeDeletePhoto(photoPath);                 // delete after successful DB operation
-            if (selectedId == contact.getId()) selectedId = -1;
-            reloadAllFromDatabase();
-            showToast("Contact deleted");
-        } catch (RuntimeException e) {
-            error("Could not delete contact", e.getMessage());
-        }
+        archiveContact(contact);   // soft delete: goes to the Archived page
     }
 
     /** While a search is active only the results show; otherwise the Settings switches decide. */
@@ -823,8 +844,10 @@ public class MainController {
         star.setCursor(Cursor.HAND);
         star.setOnMouseClicked(e -> { e.consume(); toggleFavorite(c); });
 
-        HBox top = new HBox(avatar(c, 48, 16, true), spacer(), star);
-        top.setAlignment(Pos.TOP_LEFT);
+        StackPane av = avatar(c, 48, 16, true);
+        StackPane top = new StackPane(av, star);
+        StackPane.setAlignment(av, Pos.TOP_CENTER);     // picture centered
+        StackPane.setAlignment(star, Pos.TOP_RIGHT);    // star stays in the corner
 
         HBox phone = iconLabel("phone", 12, "ic-muted", dash(c.getPhone()), "fav-meta");
         boolean noEmail = c.getEmail() == null || c.getEmail().isBlank();
@@ -989,13 +1012,20 @@ public class MainController {
     }
 
     /** Click = select, double-click = edit, right-click = Edit / Delete menu. */
+    /** Click = select, double-click = edit, right-click = Edit / Archive / Delete menu. */
     private void wireRow(Node row, Contact c) {
         ContextMenu menu = new ContextMenu();
+
         MenuItem edit = new MenuItem("Edit Contact");
         edit.setOnAction(e -> openContactForm(c));
+
+        MenuItem archive = new MenuItem("Archive Contact");
+        archive.setOnAction(e -> archiveContact(c));
+
         MenuItem delete = new MenuItem("Delete Contact");
         delete.setOnAction(e -> confirmAndDeleteContact(c));
-        menu.getItems().addAll(edit, delete);
+
+        menu.getItems().addAll(edit, archive, delete);   // the ONLY addAll
 
         row.setOnContextMenuRequested(e -> { menu.show(row, e.getScreenX(), e.getScreenY()); e.consume(); });
         row.setOnMouseClicked(e -> {
@@ -1030,7 +1060,7 @@ public class MainController {
     }
 
     private List<List<Contact>> findShortestPaths(Contact start, Contact end) {
-        ContactGraph graph = new ContactGraph(connectionDAO.getAllConnections());
+        ContactGraph graph = new ContactGraph(connectionsCache);
         BFSPathFinder.PathResult result = new BFSPathFinder(graph).findShortestPath(start.getId(), end.getId());
         if (!result.pathExists()) return null;
 
@@ -1574,7 +1604,7 @@ public class MainController {
             return;
         try {
             // Collect photo paths before wiping the DB
-            List<String> photoPaths = allContactsData.stream()
+            List<String> photoPaths = everyContact().stream()
                     .map(Contact::getPhotoPath)
                     .filter(p -> p != null && !p.isBlank())
                     .collect(Collectors.toList());
@@ -1595,10 +1625,11 @@ public class MainController {
     private List<String> buildBackup() {
         List<String> out = new ArrayList<>();
         out.add(BACKUP_HEADER);
-        for (Contact c : allContactsData)
+        for (Contact c : everyContact())
             out.add(String.join("\t", "C", String.valueOf(c.getId()), enc(c.getName()), enc(c.getPhone()),
-                    enc(c.getEmail()), String.valueOf(c.isFavorite()), enc(c.getPhotoPath())));
-        for (Connection cn : connectionsCache)
+                    enc(c.getEmail()), String.valueOf(c.isFavorite()), enc(c.getPhotoPath()),
+                    String.valueOf(c.isArchived())));
+        for (Connection cn : connectionDAO.getAllConnections())
             out.add("L\t" + cn.getContactId1() + "\t" + cn.getContactId2());
         return out;
     }
@@ -1608,7 +1639,7 @@ public class MainController {
         if (lines.isEmpty() || !BACKUP_HEADER.equals(lines.get(0).trim()))
             throw new IllegalArgumentException("Missing backup header.");
 
-        class Rec { int oldId; String name, phone, email, photoPath; boolean fav; }
+        class Rec { int oldId; String name, phone, email, photoPath; boolean fav; boolean archived;}
         List<Rec> recs = new ArrayList<>();
         Set<Integer> knownIds = new HashSet<>();
         List<int[]> edges = new ArrayList<>();
@@ -1623,6 +1654,7 @@ public class MainController {
                 r.fav = Boolean.parseBoolean(t[5]);
                 // t[6] is photo_path — present in new backups, absent in old V1 files
                 r.photoPath = (t.length > 6 && !t[6].isBlank()) ? dec(t[6]) : null;
+                r.archived = t.length > 7 && Boolean.parseBoolean(t[7]);
                 recs.add(r);
                 knownIds.add(r.oldId);
             } else if (t[0].equals("L")) {
@@ -1633,13 +1665,24 @@ public class MainController {
             if (!knownIds.contains(e[0]) || !knownIds.contains(e[1]))
                 throw new IllegalArgumentException("A connection refers to an unknown contact.");
 
+        Map<String, String> seenPhones = new HashMap<>();
+        for (Rec r : recs) {
+            if (r.archived) continue;
+            String n = PhoneNormalizer.normalize(r.phone);
+            if (n.isEmpty()) continue;
+            String other = seenPhones.put(n, r.name);
+            if (other != null)
+                throw new IllegalArgumentException("The backup has two active contacts with the same number: "
+                        + other + " and " + r.name + ".");
+        }
+
         // apply: ids are reassigned by the DB, so map old id -> new id
         contactDAO.deleteAllContacts();
         Map<Integer, Integer> idMap = new HashMap<>();
         for (Rec r : recs) {
-            Contact saved = contactDAO.addContact(new Contact(r.name, r.phone, r.email, r.photoPath));
-            if (r.fav) contactDAO.setFavorite(saved.getId(), true);
-            idMap.put(r.oldId, saved.getId());
+            Contact toSave = new Contact(r.name, r.phone, r.email, r.photoPath);
+            toSave.setArchived(r.archived);
+            Contact saved = contactDAO.addContact(toSave);
         }
         for (int[] e : edges) connectionDAO.addConnection(idMap.get(e[0]), idMap.get(e[1]));
 
@@ -1688,7 +1731,8 @@ public class MainController {
             fillIconHolder(sp, t[0], Double.parseDouble(t[1]));
             return;
         }
-        if (n instanceof Labeled l) applyPhosphorIcons(l.getGraphic()); // button graphics aren't children until skinned
+        if (n instanceof Labeled l) applyPhosphorIcons(l.getGraphic());       // button graphics
+        if (n instanceof ScrollPane sp) applyPhosphorIcons(sp.getContent());  // NEW: ScrollPane content isn't a child until skinned
         if (n instanceof Parent p) for (Node c : p.getChildrenUnmodifiable()) applyPhosphorIcons(c);
     }
 
@@ -1854,6 +1898,110 @@ public class MainController {
     }
 
     // ═════════════════════════════════════════════════════════════════
+// ARCHIVE
+// ═════════════════════════════════════════════════════════════════
+    @FXML private void onNavArchived() { showPage(archivedPage); }
+
+    @FXML
+    private void onArchiveFromDetail() {
+        Contact c = selected();
+        if (c != null) archiveContact(c);
+    }
+
+    private void archiveContact(Contact c) {
+        if (!confirm("Archive contact",
+                "Archive " + c.getName() + "? They will be hidden from Contacts and the Finder. "
+                        + "Their connections are kept and return when you restore them.", "Archive"))
+            return;
+        try {
+            contactDAO.archiveContact(c.getId());
+            reloadAllFromDatabase();
+            showToast("Contact archived");
+        } catch (RuntimeException e) {
+            error("Could not archive contact", e.getMessage());
+        }
+    }
+
+    private void restoreContact(Contact c) {
+        try {
+            contactDAO.restoreContact(c.getId());
+            reloadAllFromDatabase();
+            showToast("Contact restored");
+        } catch (DuplicatePhoneException e) {
+            error("Can't restore " + c.getName(),
+                    "Their number is now used by " + e.getConflict().getName() + ". "
+                            + "Change that contact's number, or delete this archived contact.");
+        } catch (RuntimeException e) {
+            error("Could not restore contact", e.getMessage());
+        }
+    }
+
+    private void deleteArchivedContact(Contact c) {
+        if (!confirm("Delete permanently",
+                "Permanently delete " + c.getName() + "? This also removes their connections and cannot be undone.",
+                "Delete"))
+            return;
+        try {
+            String photoPath = c.getPhotoPath();
+            contactDAO.deleteContact(c.getId());
+            safeDeletePhoto(photoPath);
+            reloadAllFromDatabase();
+            showToast("Contact deleted");
+        } catch (RuntimeException e) {
+            error("Could not delete contact", e.getMessage());
+        }
+    }
+
+    private void renderArchived() {
+        archivedList.getChildren().clear();
+        List<Contact> list = archivedContactsData.stream().sorted(byName(true)).collect(Collectors.toList());
+        archivedCount.setText(plural(list.size(), "contact"));
+        navArchivedCount.setText(String.valueOf(list.size()));
+
+        if (list.isEmpty()) {
+            Label empty = styled("Nothing archived. Archive a contact from the Contacts page and it will appear here.", "empty-text");
+            empty.setWrapText(true);
+            empty.setPadding(new Insets(24, 20, 24, 20));
+            archivedList.getChildren().add(empty);
+            return;
+        }
+        for (int i = 0; i < list.size(); i++) {
+            Contact c = list.get(i);
+            VBox text = new VBox(2, styled(c.getName(), "row-name"), styled(subtitle(c), "row-phone"));
+            HBox row = new HBox(14, avatar(c, 36, 13, false), text, spacer(),
+                    actionButton("arrow-counter-clockwise", "ic-blue", "Restore", "btn-outline-blue", "btn-label-blue",
+                            () -> restoreContact(c)),
+                    actionButton("trash", "ic-danger", "Delete", "btn-outline-danger", "btn-label-danger",
+                            () -> deleteArchivedContact(c)));
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(12, 20, 12, 20));
+            row.getStyleClass().add("archive-row");
+            if (i == list.size() - 1) row.getStyleClass().add("last");
+            archivedList.getChildren().add(row);
+        }
+    }
+
+    private Button actionButton(String iconName, String iconClass, String text,
+                                String buttonClass, String labelClass, Runnable action) {
+        Button b = new Button();
+        b.getStyleClass().add(buttonClass);
+        b.setPrefHeight(36);
+        b.setPadding(new Insets(0, 14, 0, 14));
+        HBox g = new HBox(8, icon(iconName, 14, iconClass), styled(text, labelClass));
+        g.setAlignment(Pos.CENTER);
+        b.setGraphic(g);
+        b.setOnAction(e -> action.run());
+        return b;
+    }
+
+    /** Active + archived, for backup and "clear all". */
+    private List<Contact> everyContact() {
+        List<Contact> all = new ArrayList<>(allContactsData);
+        all.addAll(archivedContactsData);
+        return all;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
     // TOAST
     // ═════════════════════════════════════════════════════════════════
 
@@ -1868,7 +2016,6 @@ public class MainController {
 
         // Make visible and opaque before the fade-in
         toastBar.setVisible(true);
-        toastBar.setManaged(false); // overlay — must not affect layout
         toastBar.setOpacity(1.0);
 
         // Auto-hide: after 2.2 s wait, fade out over 300 ms, then hide

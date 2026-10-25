@@ -295,7 +295,7 @@
 .field:focus  { -fx-border-color: -accent; }
 .field.invalid  { -fx-border-color: -danger; }
 .field.valid    { -fx-border-color: -success; }
-.field:disabled { -fx-opacity: 0.6; -fx-background-color: -surface-alt; }
+.field:disabled { -fx-opacity: 0.6; -fx-background-color: a-surface-alt; }
 /* Compact variant (e.g. the connection search field) */
 .field-compact  { -fx-pref-height: 38px; }
 
@@ -507,3 +507,13 @@
 }
 .dir-star-btn:hover { -fx-background-color: -tint; }
 .dir-star-btn:focus { -fx-border-color: -accent; -fx-border-radius: 6; -fx-border-width: 1; }
+
+/* Archived page rows */
+.archive-row { -fx-border-color: transparent transparent -border transparent; -fx-border-width: 0 0 1 0; }
+.archive-row.last { -fx-border-width: 0; }
+
+/* Box behind the logo so dark parts of the image stay readable */
+.logo-box {
+    -fx-background-color: #000080;
+    -fx-background-radius: 12;
+}

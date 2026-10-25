@@ -1,6 +1,7 @@
 package com.connectsphere.dao;
 
 import com.connectsphere.model.Contact;
+import com.connectsphere.util.PhoneNormalizer;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -11,30 +12,38 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * All SQL for the "contacts" table lives here. Controllers call these
- * methods and never write SQL themselves.
+ * All SQL for the "contacts" table lives here.
+ *
+ * Archived contacts (is_archived = 1) are invisible to every query below
+ * except getArchivedContacts() and getContactById(). Phone numbers are unique
+ * among ACTIVE contacts only, compared by phone_normalized (digits and '+').
  */
 public class ContactDAO {
 
-    /**
-     * Inserts a new contact and returns it with its generated ID and
-     * date-added timestamp filled in. If the Contact passed in already
-     * has a dateAdded (e.g. re-saving something), that value is kept;
-     * otherwise it's stamped with "now".
-     */
+    private static final String COLS =
+            "id, name, phone, email, date_added, is_favorite, photo_path, is_archived";
+
     public Contact addContact(Contact contact) {
+        if (!contact.isArchived()) {
+            Contact clash = findActiveByPhone(contact.getPhone(), -1);
+            if (clash != null) throw new DuplicatePhoneException(clash);
+        }
+
         String dateAdded = contact.getDateAdded() != null ? contact.getDateAdded() : LocalDateTime.now().toString();
 
-        String sql = "INSERT INTO contacts (name, phone, email, date_added, is_favorite, photo_path) VALUES (?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO contacts (name, phone, phone_normalized, email, date_added, is_favorite, photo_path, is_archived) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             stmt.setString(1, contact.getName());
             stmt.setString(2, contact.getPhone());
-            stmt.setString(3, contact.getEmail());
-            stmt.setString(4, dateAdded);
-            stmt.setInt(5, contact.isFavorite() ? 1 : 0);
-            stmt.setString(6, contact.getPhotoPath());
+            stmt.setString(3, PhoneNormalizer.normalize(contact.getPhone()));
+            stmt.setString(4, contact.getEmail());
+            stmt.setString(5, dateAdded);
+            stmt.setInt(6, contact.isFavorite() ? 1 : 0);
+            stmt.setString(7, contact.getPhotoPath());
+            stmt.setInt(8, contact.isArchived() ? 1 : 0);
             stmt.executeUpdate();
 
             try (ResultSet keys = stmt.getGeneratedKeys()) {
@@ -49,31 +58,29 @@ public class ContactDAO {
         return contact;
     }
 
-    /**
-     * Updates an existing contact's editable details (name/phone/email/photo),
-     * matched by id. date_added and is_favorite are intentionally not
-     * touched here — favorite status goes through setFavorite() instead.
-     */
+    /** Updates name/phone/email/photo. Favorite and archive state have their own methods. */
     public void updateContact(Contact contact) {
-        String sql = "UPDATE contacts SET name = ?, phone = ?, email = ?, photo_path = ? WHERE id = ?";
+        if (!contact.isArchived()) {
+            Contact clash = findActiveByPhone(contact.getPhone(), contact.getId());
+            if (clash != null) throw new DuplicatePhoneException(clash);
+        }
+
+        String sql = "UPDATE contacts SET name = ?, phone = ?, phone_normalized = ?, email = ?, photo_path = ? WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, contact.getName());
             stmt.setString(2, contact.getPhone());
-            stmt.setString(3, contact.getEmail());
-            stmt.setString(4, contact.getPhotoPath());
-            stmt.setInt(5, contact.getId());
+            stmt.setString(3, PhoneNormalizer.normalize(contact.getPhone()));
+            stmt.setString(4, contact.getEmail());
+            stmt.setString(5, contact.getPhotoPath());
+            stmt.setInt(6, contact.getId());
             stmt.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to update contact id " + contact.getId(), e);
         }
     }
 
-    /**
-     * Marks a contact as favorited or not. Powers the star toggle on
-     * contact rows and the Favorite Contacts card section.
-     */
     public void setFavorite(int contactId, boolean favorite) {
         String sql = "UPDATE contacts SET is_favorite = ? WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
@@ -87,10 +94,72 @@ public class ContactDAO {
         }
     }
 
+    // ───────────────────────────── ARCHIVE ─────────────────────────────
+
+    /** Hides the contact everywhere except the Archived page. Connections and favorite flag are kept. */
+    public void archiveContact(int contactId) {
+        setArchivedFlag(contactId, true);
+    }
+
     /**
-     * Deletes a contact by id. Thanks to ON DELETE CASCADE in the schema,
-     * any connections involving this contact are removed automatically.
+     * Brings an archived contact back. Throws DuplicatePhoneException if an
+     * active contact has taken the number in the meantime.
      */
+    public void restoreContact(int contactId) {
+        Contact c = getContactById(contactId);
+        if (c == null) return;
+        Contact clash = findActiveByPhone(c.getPhone(), contactId);
+        if (clash != null) throw new DuplicatePhoneException(clash);
+        setArchivedFlag(contactId, false);
+    }
+
+    private void setArchivedFlag(int contactId, boolean archived) {
+        String sql = "UPDATE contacts SET is_archived = ? WHERE id = ?";
+        Connection conn = DatabaseManager.getConnection();
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, archived ? 1 : 0);
+            stmt.setInt(2, contactId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to change archive state for contact id " + contactId, e);
+        }
+    }
+
+    public List<Contact> getArchivedContacts() {
+        return query("SELECT " + COLS + " FROM contacts WHERE is_archived = 1 ORDER BY name COLLATE NOCASE",
+                "Failed to load archived contacts");
+    }
+
+    // ───────────────────────────── DUPLICATES ─────────────────────────────
+
+    /**
+     * Returns the ACTIVE contact that already uses this number (ignoring
+     * spaces, dashes, brackets), or null. Pass the contact's own id as
+     * excludeId when editing, or -1 when adding.
+     */
+    public Contact findActiveByPhone(String phone, int excludeId) {
+        String normalized = PhoneNormalizer.normalize(phone);
+        if (normalized.isEmpty()) return null;
+
+        String sql = "SELECT " + COLS + " FROM contacts "
+                + "WHERE is_archived = 0 AND phone_normalized = ? AND id <> ? LIMIT 1";
+        Connection conn = DatabaseManager.getConnection();
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, normalized);
+            stmt.setInt(2, excludeId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) return mapRow(rs);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to check phone number", e);
+        }
+        return null;
+    }
+
+    // ───────────────────────────── DELETE ─────────────────────────────
+
     public void deleteContact(int contactId) {
         String sql = "DELETE FROM contacts WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
@@ -103,54 +172,33 @@ public class ContactDAO {
         }
     }
 
-    /**
-     * Returns every contact in the database, ordered by name.
-     * Used to populate the TableView and the Start/Destination selectors.
-     */
+    /** Deletes every contact, archived ones included (backs "Clear All Data"). */
+    public void deleteAllContacts() {
+        String sql = "DELETE FROM contacts";
+        Connection conn = DatabaseManager.getConnection();
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to clear contacts", e);
+        }
+    }
+
+    // ───────────────────────────── QUERIES (active only) ─────────────────────────────
+
     public List<Contact> getAllContacts() {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts ORDER BY name COLLATE NOCASE";
-        List<Contact> contacts = new ArrayList<>();
-        Connection conn = DatabaseManager.getConnection();
-
-        try (PreparedStatement stmt = conn.prepareStatement(sql);
-             ResultSet rs = stmt.executeQuery()) {
-
-            while (rs.next()) {
-                contacts.add(mapRow(rs));
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to load contacts", e);
-        }
-        return contacts;
+        return query("SELECT " + COLS + " FROM contacts WHERE is_archived = 0 ORDER BY name COLLATE NOCASE",
+                "Failed to load contacts");
     }
 
-    /**
-     * Returns every favorited contact, ordered by name. Powers the
-     * Favorite Contacts card section on the Contacts page.
-     */
     public List<Contact> getFavoriteContacts() {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts WHERE is_favorite = 1 ORDER BY name COLLATE NOCASE";
-        List<Contact> contacts = new ArrayList<>();
-        Connection conn = DatabaseManager.getConnection();
-
-        try (PreparedStatement stmt = conn.prepareStatement(sql);
-             ResultSet rs = stmt.executeQuery()) {
-
-            while (rs.next()) {
-                contacts.add(mapRow(rs));
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to load favorite contacts", e);
-        }
-        return contacts;
+        return query("SELECT " + COLS + " FROM contacts WHERE is_favorite = 1 AND is_archived = 0 ORDER BY name COLLATE NOCASE",
+                "Failed to load favorite contacts");
     }
 
-    /**
-     * Looks up a single contact by id. Returns null if not found —
-     * callers (like BFSPathFinder's caller) should check for that.
-     */
+    /** Looks up one contact by id, archived or not. Returns null if not found. */
     public Contact getContactById(int id) {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts WHERE id = ?";
+        String sql = "SELECT " + COLS + " FROM contacts WHERE id = ?";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -166,19 +214,10 @@ public class ContactDAO {
         return null;
     }
 
-    /**
-     * Searches contacts whose name, phone, or email contains the given
-     * text (case-insensitive). Powers the Search field in the UI.
-     * Passing an empty string returns every contact.
-     */
     public List<Contact> searchContacts(String keyword) {
-        String sql = """
-                SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts
-                WHERE name  LIKE ? COLLATE NOCASE
-                   OR phone LIKE ? COLLATE NOCASE
-                   OR email LIKE ? COLLATE NOCASE
-                ORDER BY name COLLATE NOCASE
-                """;
+        String sql = "SELECT " + COLS + " FROM contacts WHERE is_archived = 0 AND ("
+                + "name LIKE ? COLLATE NOCASE OR phone LIKE ? COLLATE NOCASE OR email LIKE ? COLLATE NOCASE) "
+                + "ORDER BY name COLLATE NOCASE";
         List<Contact> results = new ArrayList<>();
         String pattern = "%" + keyword + "%";
         Connection conn = DatabaseManager.getConnection();
@@ -199,13 +238,8 @@ public class ContactDAO {
         return results;
     }
 
-    /**
-     * Returns the most recently added contacts (highest id first), capped
-     * at `limit` rows. Powers the "Recently Added" list on the Contacts
-     * page. Relies on AUTOINCREMENT ids being assigned in insertion order.
-     */
     public List<Contact> getRecentContacts(int limit) {
-        String sql = "SELECT id, name, phone, email, date_added, is_favorite, photo_path FROM contacts ORDER BY id DESC LIMIT ?";
+        String sql = "SELECT " + COLS + " FROM contacts WHERE is_archived = 0 ORDER BY id DESC LIMIT ?";
         List<Contact> contacts = new ArrayList<>();
         Connection conn = DatabaseManager.getConnection();
 
@@ -222,12 +256,8 @@ public class ContactDAO {
         return contacts;
     }
 
-    /**
-     * Total number of contacts currently stored. Powers the Settings
-     * page's "TOTAL CONTACTS" stat.
-     */
     public int getContactCount() {
-        String sql = "SELECT COUNT(*) FROM contacts";
+        String sql = "SELECT COUNT(*) FROM contacts WHERE is_archived = 0";
         Connection conn = DatabaseManager.getConnection();
 
         try (PreparedStatement stmt = conn.prepareStatement(sql);
@@ -238,25 +268,23 @@ public class ContactDAO {
         }
     }
 
-    /**
-     * Deletes every contact (and, via ON DELETE CASCADE, every connection
-     * that referenced one). Backs the Settings page's "Clear All Data".
-     */
-    public void deleteAllContacts() {
-        String sql = "DELETE FROM contacts";
+    // ───────────────────────────── helpers ─────────────────────────────
+
+    private List<Contact> query(String sql, String errorMessage) {
+        List<Contact> contacts = new ArrayList<>();
         Connection conn = DatabaseManager.getConnection();
 
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.executeUpdate();
+        try (PreparedStatement stmt = conn.prepareStatement(sql);
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                contacts.add(mapRow(rs));
+            }
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to clear contacts", e);
+            throw new RuntimeException(errorMessage, e);
         }
+        return contacts;
     }
 
-    /**
-     * Small helper to turn one ResultSet row into a Contact object,
-     * so the mapping logic isn't duplicated across every query method.
-     */
     private Contact mapRow(ResultSet rs) throws SQLException {
         return new Contact(
                 rs.getInt("id"),
@@ -265,7 +293,8 @@ public class ContactDAO {
                 rs.getString("email"),
                 rs.getString("date_added"),
                 rs.getInt("is_favorite") == 1,
-                rs.getString("photo_path")
+                rs.getString("photo_path"),
+                rs.getInt("is_archived") == 1
         );
     }
 }

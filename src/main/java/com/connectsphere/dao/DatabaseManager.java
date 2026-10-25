@@ -1,47 +1,45 @@
 package com.connectsphere.dao;
 
+import com.connectsphere.util.PhoneNormalizer;
+
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * Owns the single SQLite connection used by the whole application and
- * creates the schema (contacts + connections tables) the first time the
- * app runs. Every DAO asks this class for the shared Connection object —
- * no other class opens its own connection.
+ * creates / migrates the schema. Every DAO asks this class for the shared
+ * Connection object — no other class opens its own connection.
  */
 public class DatabaseManager {
 
-    // Stored in a "data" folder at the project root, next to /src.
-    // Using a relative path means the .db file is created wherever the
-    // app is launched from (IntelliJ's working directory = project root
-    // by default), and it persists between runs since it's a real file
-    // on disk, not something wiped on exit.
     private static final String DB_FOLDER = "data";
     private static final String DB_FILE = DB_FOLDER + "/contacts.db";
     private static final String URL = "jdbc:sqlite:" + DB_FILE;
 
     private static Connection connection;
 
+    /** Problems found during startup migration that the UI should tell the user about. */
+    private static final List<String> startupWarnings = new ArrayList<>();
+
     private DatabaseManager() {
         // utility class — no instances
     }
 
-    /**
-     * Opens (or reuses) the single shared connection to contacts.db.
-     * Call this once at application startup, and every DAO calls it again
-     * afterward to reuse the same connection.
-     */
     public static Connection getConnection() {
         if (connection == null) {
             try {
-                // Make sure the "data" folder exists before SQLite tries
-                // to create the file inside it.
                 File folder = new File(DB_FOLDER);
                 if (!folder.exists()) {
                     folder.mkdirs();
@@ -49,8 +47,6 @@ public class DatabaseManager {
 
                 connection = DriverManager.getConnection(URL);
 
-                // SQLite does not enforce foreign keys unless you turn
-                // this on explicitly, per connection.
                 try (Statement pragma = connection.createStatement()) {
                     pragma.execute("PRAGMA foreign_keys = ON;");
                 }
@@ -62,29 +58,28 @@ public class DatabaseManager {
         return connection;
     }
 
-    /**
-     * Creates the contacts and connections tables if they don't already
-     * exist, then migrates any older contacts.db file that predates the
-     * date_added / is_favorite columns. Safe to call every time the app
-     * starts.
-     */
+    /** Warnings produced by the last initializeDatabase() call (empty when all is well). */
+    public static List<String> getStartupWarnings() {
+        return Collections.unmodifiableList(startupWarnings);
+    }
+
     public static void initializeDatabase() {
+        startupWarnings.clear();
+
         String createContactsTable = """
                 CREATE TABLE IF NOT EXISTS contacts (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name         TEXT NOT NULL,
-                    phone        TEXT,
-                    email        TEXT,
-                    date_added   TEXT,
-                    is_favorite  INTEGER NOT NULL DEFAULT 0,
-                    photo_path   TEXT
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name             TEXT NOT NULL,
+                    phone            TEXT,
+                    phone_normalized TEXT,
+                    email            TEXT,
+                    date_added       TEXT,
+                    is_favorite      INTEGER NOT NULL DEFAULT 0,
+                    photo_path       TEXT,
+                    is_archived      INTEGER NOT NULL DEFAULT 0
                 );
                 """;
 
-        // contact_id_1 / contact_id_2 both reference contacts.id.
-        // ON DELETE CASCADE means deleting a contact automatically removes
-        // any connections that mention it, so you never end up with a
-        // "dangling" connection pointing at a contact that no longer exists.
         String createConnectionsTable = """
                 CREATE TABLE IF NOT EXISTS connections (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,14 +99,10 @@ public class DatabaseManager {
 
         migrateContactsTable();
         migrateConnectionsTable();
+        migratePhoneUniqueness();
     }
 
-    /**
-     * CREATE TABLE IF NOT EXISTS only helps for brand-new databases — an
-     * existing contacts.db from before this feature was added won't have
-     * date_added / is_favorite. This adds them in place if missing, so
-     * older databases keep working without the user losing any data.
-     */
+    /** Adds any column an older contacts.db is missing. */
     private static void migrateContactsTable() {
         Set<String> existingColumns = new HashSet<>();
         try (Statement stmt = getConnection().createStatement();
@@ -133,36 +124,93 @@ public class DatabaseManager {
             if (!existingColumns.contains("photo_path")) {
                 stmt.execute("ALTER TABLE contacts ADD COLUMN photo_path TEXT;");
             }
+            if (!existingColumns.contains("is_archived")) {
+                stmt.execute("ALTER TABLE contacts ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;");
+            }
+            if (!existingColumns.contains("phone_normalized")) {
+                stmt.execute("ALTER TABLE contacts ADD COLUMN phone_normalized TEXT;");
+            }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to migrate contacts table schema", e);
         }
     }
 
     /**
-     * Makes the connections table duplicate-proof.
-     *
-     * Order matters:
-     *   1. Delete self-connections (A-A), which are meaningless.
-     *   2. Delete duplicate pairs (A-B and B-A, or repeated rows), keeping
-     *      the lowest id per pair. This MUST run before step 3, otherwise
-     *      CREATE UNIQUE INDEX fails on existing duplicate data and the
-     *      app cannot start.
-     *   3. Create the unique index on the normalised (min, max) id pair.
-     *
-     * Steps 1 and 2 are no-ops on a clean database, so running them on
-     * every startup is cheap and safe. All three run in one transaction,
-     * so a failure leaves the data untouched.
-     *
-     * A unique index is used instead of a table constraint because SQLite
-     * cannot add constraints to an existing table via ALTER TABLE, and
-     * rebuilding the table is risky for live data. CASE WHEN is used
-     * instead of MIN()/MAX() to keep the expression index portable across
-     * SQLite versions.
-     *
-     * Effect: inserting (A, B) when (B, A) exists raises a constraint
-     * error. Use "INSERT OR IGNORE" in ConnectionDAO.addConnection() so a
-     * duplicate is skipped instead of throwing.
+     * Phone uniqueness among ACTIVE contacts.
+     *   1. Fill phone_normalized for rows that don't have it yet.
+     *   2. Look for active contacts that already share a number. If any exist the
+     *      unique index cannot be built, so the duplicates are reported through
+     *      getStartupWarnings() and the index is retried on the next launch.
+     *   3. Otherwise create the partial unique index.
+     * Archived contacts are excluded from the index, so they never block a number.
      */
+    private static void migratePhoneUniqueness() {
+        Connection conn = getConnection();
+
+        // 1) backfill (collect first, then write, so no ResultSet stays open during updates)
+        Map<Integer, String> toFill = new LinkedHashMap<>();
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT id, phone FROM contacts WHERE phone_normalized IS NULL")) {
+            while (rs.next()) {
+                toFill.put(rs.getInt("id"), PhoneNormalizer.normalize(rs.getString("phone")));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read phone numbers for migration", e);
+        }
+
+        if (!toFill.isEmpty()) {
+            try {
+                conn.setAutoCommit(false);
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE contacts SET phone_normalized = ? WHERE id = ?")) {
+                    for (Map.Entry<Integer, String> e : toFill.entrySet()) {
+                        ps.setString(1, e.getValue());
+                        ps.setInt(2, e.getKey());
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                try { conn.rollback(); } catch (SQLException ignored) { }
+                throw new RuntimeException("Failed to fill phone_normalized", e);
+            } finally {
+                try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
+            }
+        }
+
+        // 2) duplicates among active contacts
+        String findDuplicates = """
+                SELECT phone, GROUP_CONCAT(name, ', ') AS names
+                FROM contacts
+                WHERE is_archived = 0 AND phone_normalized <> ''
+                GROUP BY phone_normalized
+                HAVING COUNT(*) > 1
+                """;
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(findDuplicates)) {
+            while (rs.next()) {
+                startupWarnings.add(rs.getString("phone") + "  →  " + rs.getString("names"));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to check for duplicate phone numbers", e);
+        }
+        if (!startupWarnings.isEmpty()) return; // can't build the index yet
+
+        // 3) the unique index
+        String createIndex = """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_contact_phone_active
+                ON contacts (phone_normalized)
+                WHERE is_archived = 0 AND phone_normalized <> ''
+                """;
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute(createIndex);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to create the unique phone index", e);
+        }
+    }
+
+    /** Makes the connections table duplicate-proof (unchanged from before). */
     private static void migrateConnectionsTable() {
         String deleteSelfLoops = """
                 DELETE FROM connections WHERE contact_id_1 = contact_id_2;
@@ -199,21 +247,19 @@ public class DatabaseManager {
             try {
                 conn.rollback();
             } catch (SQLException ignored) {
-                // nothing more we can do; the original error is more useful
+                // the original error is more useful
             }
             throw new RuntimeException("Failed to clean up / index the connections table", e);
         } finally {
             try {
                 conn.setAutoCommit(true);
             } catch (SQLException ignored) {
-                // connection is shared; best effort to restore the default
+                // best effort
             }
         }
     }
 
-    /**
-     * Call this when the application closes (e.g. in MainApp.stop()).
-     */
+    /** Call this when the application closes (e.g. in MainApp.stop()). */
     public static void closeConnection() {
         if (connection != null) {
             try {
